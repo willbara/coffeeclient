@@ -16,6 +16,7 @@ public abstract class StringDecomposerMixin {
 			"iterateFormatted(Ljava/lang/String;ILnet/minecraft/network/chat/Style;Lnet/minecraft/util/FormattedCharSink;)Z"},
 		index = 0)
 	private static String adjustText(String text) {
+		if (PlayerProtect.suspended) return text;
 		PlayerProtect protect = ModuleManager.ifOn(PlayerProtect.class);
 		return protect == null ? text : protect.replaceName(text);
 	}

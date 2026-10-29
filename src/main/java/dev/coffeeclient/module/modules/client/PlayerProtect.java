@@ -11,11 +11,14 @@ import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.world.entity.player.PlayerSkin;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Hide your name and skin (client-side). Formerly NameProtect. */
 public final class PlayerProtect extends Module {
@@ -37,6 +40,14 @@ public final class PlayerProtect extends Module {
 
 	/** Real player name -> stable random alias, kept for the session. */
 	private final Map<String, String> aliases = new LinkedHashMap<>();
+	private Pattern aliasPattern;
+	private int aliasPatternSize;
+
+	/**
+	 * Set around text measuring that cuts a string at a position it measured: the cut index must match the
+	 * string it is applied to, which a longer alias would break (render thread only).
+	 */
+	public static boolean suspended;
 
 	/** The tab-list player whose skin we wear, and the connection it was picked on. */
 	private UUID donor;
@@ -78,14 +89,34 @@ public final class PlayerProtect extends Module {
 		}
 	}
 
+	/** Only your own name swapped: what the client's own interface shows, where other players' names are not text to rewrite. */
+	public String hideOwnName(String string) {
+		if (string == null || !isEnabled() || !nameProtect.get() || username.isEmpty()) return string;
+		return string.replace(username, name.get());
+	}
+
 	public String replaceName(String string) {
 		if (string == null || !isEnabled()) return string;
-		String out = string;
-		if (nameProtect.get() && !username.isEmpty()) out = out.replace(username, name.get());
-		if (randomizeChat.get() && out.length() >= 3) {
-			for (Map.Entry<String, String> e : aliases.entrySet()) out = out.replace(e.getKey(), e.getValue());
+		String out = hideOwnName(string);
+		if (randomizeChat.get() && out.length() >= 3 && !aliases.isEmpty()) {
+			out = aliasPattern().matcher(out).replaceAll(m -> Matcher.quoteReplacement(aliases.get(m.group())));
 		}
 		return out;
+	}
+
+	/**
+	 * Whole names only (so "Bob" leaves "Bobby" and "Breadcrumbs" alone), also right after a formatting
+	 * code, longest first; one pass, so an alias is never rewritten by a later name.
+	 */
+	private Pattern aliasPattern() {
+		if (aliasPattern == null || aliasPatternSize != aliases.size()) {
+			StringBuilder names = new StringBuilder();
+			aliases.keySet().stream().sorted(Comparator.comparingInt(String::length).reversed())
+				.forEach(n -> names.append(names.isEmpty() ? "" : "|").append(Pattern.quote(n)));
+			aliasPattern = Pattern.compile("(?:(?<![A-Za-z0-9_])|(?<=§.))(?:" + names + ")(?![A-Za-z0-9_])");
+			aliasPatternSize = aliases.size();
+		}
+		return aliasPattern;
 	}
 
 	public String getName(String original) {

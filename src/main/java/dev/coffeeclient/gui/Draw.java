@@ -3,6 +3,8 @@ package dev.coffeeclient.gui;
 import dev.coffeeclient.core.CoffeeClient;
 import dev.coffeeclient.gui.fx.Shapes;
 import dev.coffeeclient.gui.theme.Theme;
+import dev.coffeeclient.module.ModuleManager;
+import dev.coffeeclient.module.modules.client.PlayerProtect;
 import dev.coffeeclient.util.Colors;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -82,12 +84,15 @@ public final class Draw {
 
 	/**
 	 * A plain string as drawable text. Going through a Component runs bidirectional-text analysis on
-	 * every draw, which profiled as a large share of HUD allocation; this keeps formatting codes (and
-	 * PlayerProtect, which hooks iterateFormatted) without it.
+	 * every draw, which profiled as a large share of HUD allocation; this keeps formatting codes without
+	 * it. Only your own name is hidden here: the client's labels are not chat, and PlayerProtect's
+	 * hook on iterateFormatted (skipped by calling the overload below it) would rewrite them.
 	 */
 	private static FormattedCharSequence face(String text) {
 		Style style = style();
-		return sink -> StringDecomposer.iterateFormatted(text, style, sink);
+		PlayerProtect protect = ModuleManager.ifOn(PlayerProtect.class);
+		String shown = protect == null ? text : protect.hideOwnName(text);
+		return sink -> StringDecomposer.iterateFormatted(shown, 0, style, style, sink);
 	}
 
 	public static Font font() {
@@ -533,7 +538,14 @@ public final class Draw {
 	}
 
 	public static String substringByWidth(String s, int maxWidth) {
-		return font().substrByWidth(Component.literal(s).withStyle(style()), maxWidth).getString();
+		PlayerProtect protect = ModuleManager.ifOn(PlayerProtect.class);
+		String shown = protect == null ? s : protect.hideOwnName(s);
+		PlayerProtect.suspended = true;
+		try {
+			return font().substrByWidth(Component.literal(shown).withStyle(style()), maxWidth).getString();
+		} finally {
+			PlayerProtect.suspended = false;
+		}
 	}
 
 	/**
