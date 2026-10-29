@@ -1,0 +1,58 @@
+# gradle
+
+.gradle/
+build/
+out/
+classes/
+
+# eclipse
+
+*.launch
+
+# idea
+
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# vscode
+
+.settings/
+.vscode/
+bin/
+.classpath
+.project
+
+# macos
+
+*.DS_Store
+
+# run directory (game logs/saves/options)
+
+run/
+
+# upstream reference copy used while porting (not part of this project)
+
+coffee-module-roadmap.md
+
+# java
+
+hs_err_*.log
+replay_*.log
+*.hprof
+*.jfr
+
+# game logs
+
+logs/
+
+# local-only: machine paths, secrets, tool state
+local.properties
+.env
+*.key
+.claude/
+.opencode/
+crash-reports/
+*.log
+*.log.gz

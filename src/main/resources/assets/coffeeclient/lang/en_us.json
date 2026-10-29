@@ -1,0 +1,10 @@
+{
+	"key.category.coffeeclient.main": "Coffee Client",
+	"key.coffeeclient.dashboard": "Open dashboard",
+	"key.coffeeclient.click_gui": "Open ClickGUI",
+	"key.coffeeclient.hud_editor": "Open HUD editor",
+	"key.coffeeclient.macros": "Open macros",
+	"key.coffeeclient.profiles": "Open profiles",
+	"key.coffeeclient.friends": "Open friends",
+	"key.coffeeclient.settings": "Open settings"
+}

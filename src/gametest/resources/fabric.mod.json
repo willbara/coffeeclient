@@ -1,0 +1,16 @@
+{
+	"schemaVersion": 1,
+	"id": "coffeeclient_test",
+	"version": "1.0.0",
+	"name": "Coffee Client Tests",
+	"license": "GPL-3.0-or-later",
+	"environment": "client",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"dev.coffeeclient.gametest.CoffeeGameTest"
+		]
+	},
+	"depends": {
+		"coffeeclient": "*"
+	}
+}

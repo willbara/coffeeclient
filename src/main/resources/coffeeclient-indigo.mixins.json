@@ -1,0 +1,12 @@
+{
+	"required": false,
+	"package": "dev.coffeeclient.mixin.indigo",
+	"plugin": "dev.coffeeclient.core.MixinPlugin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"AltModelBlockRendererImplMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

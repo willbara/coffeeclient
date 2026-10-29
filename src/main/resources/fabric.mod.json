@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"id": "coffeeclient",
+	"version": "${version}",
+	"name": "Coffee Client",
+	"description": "A deliciously beautiful utility client for Minecraft.",
+	"authors": ["Will"],
+	"license": "GPL-3.0",
+	"icon": "assets/coffeeclient/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["dev.coffeeclient.core.CoffeeClient"]
+	},
+	"mixins": [
+		"coffeeclient.mixins.json",
+		"coffeeclient-sodium.mixins.json",
+		"coffeeclient-indigo.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.18.4",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

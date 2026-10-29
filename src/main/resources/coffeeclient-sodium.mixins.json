@@ -1,0 +1,17 @@
+{
+	"required": false,
+	"package": "dev.coffeeclient.mixin.sodium",
+	"plugin": "dev.coffeeclient.core.MixinPlugin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"SodiumBlockRenderContextMixin",
+		"SodiumBlockRendererMixin",
+		"SodiumChunkBuilderMeshingTaskMixin",
+		"SodiumDefaultFluidRendererMixin",
+		"SodiumFluidRendererImplMixin",
+		"SodiumWorldRendererMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

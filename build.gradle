@@ -1,0 +1,159 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.regex.Pattern
+
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+base {
+	archivesName = project.mod_id
+}
+
+repositories {
+	// Meteor Development maven: Starscript (HUD text templates).
+	maven {
+		name "Meteor"
+		url "https://maven.meteordev.org/releases"
+	}
+	// Modrinth maven: Sodium, compiled against for the optional compat mixins (never bundled).
+	exclusiveContent {
+		forRepository {
+			maven {
+				name "Modrinth"
+				url "https://api.modrinth.com/maven"
+			}
+		}
+		filter {
+			includeGroup "maven.modrinth"
+		}
+	}
+}
+
+dependencies {
+	// 26.1+ ships unobfuscated: no mappings line, and plain implementation (Loom does not remap).
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	// Starscript powers the expression-based HUD elements. Bundled in the jar (jar-in-jar).
+	implementation "org.meteordev:starscript:${project.starscript_version}"
+	include "org.meteordev:starscript:${project.starscript_version}"
+	compileOnly("maven.modrinth:sodium:${project.sodium_version}") { transitive = false }
+	// SOCKS4/5 and HTTP proxy handlers for the proxy manager. Minecraft ships the rest of netty
+	// (keep this version equal to Minecraft's), but not these two. Bundled in the jar (jar-in-jar).
+	implementation("io.netty:netty-handler-proxy:${project.netty_version}") { transitive = false }
+	include("io.netty:netty-handler-proxy:${project.netty_version}")
+	implementation("io.netty:netty-codec-socks:${project.netty_version}") { transitive = false }
+	include("io.netty:netty-codec-socks:${project.netty_version}")
+
+	// ./gradlew test : plain unit tests (src/test) for logic that needs no running game.
+	testImplementation "org.junit.jupiter:junit-jupiter:5.10.2"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.2"
+}
+
+test {
+	useJUnitPlatform()
+}
+
+// ./gradlew runClientGameTest : Fabric client gametests (src/gametest) in a fresh flat world; fails the
+// build when a check fails. Screenshots land in build/run/clientGameTest/screenshots.
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = "coffeeclient_test"
+		enableGameTests = false
+		enableClientGameTests = true
+		eula = true
+		username = "Coffee-Bot"
+	}
+}
+
+loom {
+	runs {
+		client {
+			// ./gradlew runClient -PdevTour : open every screen in a test world and screenshot it (dev only)
+			if (project.hasProperty("devTour")) {
+				vmArg "-Dcoffeeclient.devTour=true"
+				programArgs "--width", "1280", "--height", "720"
+				// -PdevTourOnly=preset,cosmetic : only the steps whose name contains one of these
+				if (project.hasProperty("devTourOnly")) vmArg "-Dcoffeeclient.devTourOnly=${project.property('devTourOnly')}"
+			}
+			// ./gradlew runClient -Pbench : open the tour world, hold still, and record a JFR profile to run/bench.jfr
+			if (project.hasProperty("bench")) {
+				vmArg "-Dcoffeeclient.bench=true"
+				vmArg "-Dcoffeeclient.benchMode=${project.property('bench')}"
+				vmArg "-XX:StartFlightRecording=filename=${project.file('run/bench.jfr')},settings=profile"
+				programArgs "--width", "1280", "--height", "720"
+			}
+		}
+	}
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+	it.options.encoding = "UTF-8"
+}
+
+java {
+	toolchain.languageVersion = JavaLanguageVersion.of(25)
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	// dev-only tooling never ships
+	exclude "dev/coffeeclient/dev/**"
+}
+
+/**
+ * Copies the built jar into a launcher profile's mods/ folder. Only files named
+ * "<modId>-<version>.jar" are ever deleted; nothing else in the profile is touched.
+ */
+abstract class DeployToProfile extends DefaultTask {
+	@InputFile
+	abstract RegularFileProperty getModJar()
+
+	@Input
+	abstract Property<String> getProfileDir()
+
+	@Input
+	abstract Property<String> getModId()
+
+	@TaskAction
+	void deploy() {
+		File profile = new File(profileDir.get())
+		if (!profile.isDirectory()) {
+			throw new GradleException("Test profile not found: '${profile}'. Set testProfileDir in gradle.properties or pass -PtestProfileDir=<path>.")
+		}
+		File mods = new File(profile, "mods")
+		if (!mods.isDirectory()) {
+			if (!mods.mkdirs()) throw new GradleException("Could not create '${mods}'")
+			logger.lifecycle("Created '${mods}'")
+		}
+		Pattern ours = Pattern.compile("^" + Pattern.quote(modId.get()) + "-\\d[^/\\\\]*\\.jar\$")
+		File jar = modJar.get().asFile
+		mods.listFiles().findAll { it.isFile() && ours.matcher(it.name).matches() && it.name != jar.name }.each { old ->
+			if (!old.delete()) throw new GradleException("Could not delete old jar '${old}'")
+			logger.lifecycle("Removed old '${old.name}'")
+		}
+		Files.copy(jar.toPath(), new File(mods, jar.name).toPath(), StandardCopyOption.REPLACE_EXISTING)
+		logger.lifecycle("Deployed '${jar.name}' to '${mods}'")
+	}
+}
+
+tasks.register("deployToTestProfile", DeployToProfile) {
+	group = "deployment"
+	description = "Builds the mod jar and copies it into <testProfileDir>/mods, replacing only older copies of this mod."
+	modJar = tasks.named("jar").flatMap { it.archiveFile }
+	profileDir = providers.gradleProperty("testProfileDir").orElse("")
+	modId = providers.gradleProperty("mod_id")
+	outputs.upToDateWhen { false }
+}
