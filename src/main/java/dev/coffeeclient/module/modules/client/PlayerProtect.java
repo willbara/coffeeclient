@@ -36,8 +36,6 @@ public final class PlayerProtect extends Module {
 	public final EnumSetting<SkinSource> skinSource = setting(new EnumSetting<>("Skin",
 		"Steve: the default skin. Tab player: a random tab-list player's skin, or Steve when nobody else's skin is available", SkinSource.Steve));
 
-	private String username = "";
-
 	/** Real player name -> stable random alias, kept for the session. */
 	private final Map<String, String> aliases = new LinkedHashMap<>();
 	private Pattern aliasPattern;
@@ -64,11 +62,6 @@ public final class PlayerProtect extends Module {
 	}
 
 	@Override
-	protected void onEnable() {
-		if (mc().getUser() != null) username = mc().getUser().getName();
-	}
-
-	@Override
 	protected void onDisable() {
 		clearDonor();
 	}
@@ -84,15 +77,22 @@ public final class PlayerProtect extends Module {
 		if (!randomizeChat.get()) return;
 		for (PlayerInfo info : connection.getOnlinePlayers()) {
 			String playerName = info.getProfile().name();
-			if (playerName.isEmpty() || playerName.equals(username)) continue;
+			if (playerName.isEmpty() || playerName.equals(username())) continue;
 			aliases.computeIfAbsent(playerName, n -> randomAlias());
 		}
 	}
 
 	/** Only your own name swapped: what the client's own interface shows, where other players' names are not text to rewrite. */
 	public String hideOwnName(String string) {
-		if (string == null || !isEnabled() || !nameProtect.get() || username.isEmpty()) return string;
-		return string.replace(username, name.get());
+		if (string == null || !isEnabled() || !nameProtect.get()) return string;
+		String username = username();
+		return username.isEmpty() ? string : string.replace(username, name.get());
+	}
+
+	/** The live account name: it changes when the account switcher swaps the session, so it is never cached. */
+	private String username() {
+		var user = mc().getUser();
+		return user == null ? "" : user.getName();
 	}
 
 	public String replaceName(String string) {
