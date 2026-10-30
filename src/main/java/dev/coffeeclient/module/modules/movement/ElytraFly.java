@@ -34,9 +34,13 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
+import net.minecraft.world.entity.player.Input;
+import dev.coffeeclient.mixin.LocalPlayerAccessor;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.Items;
@@ -142,38 +146,50 @@ public final class ElytraFly extends Module {
 	public final BooleanSetting autoJump = group(new BooleanSetting("Auto jump", "Automatically jumps for you", true)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
 
-	public final EnumSetting<YawLock> yawLockMode = group(new EnumSetting<>("Yaw lock", "Whether to lock your yaw angle", YawLock.Smart)
+	public final BooleanSetting autoWalk = group(new BooleanSetting("Auto walk", "Holds forward for you while bouncing; off, you walk yourself", true)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
+
+	public final EnumSetting<YawLock> yawLockMode = group(new EnumSetting<>("Yaw lock", "Whether to lock your yaw angle", YawLock.None)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
 
 	public final NumberSetting yaw = group(new NumberSetting("Yaw", "The yaw angle to look at when using simple yaw lock in bounce mode", 0, 0, 360, 1)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && yawLockMode.get() == YawLock.Simple), "General");
 
-	public final BooleanSetting lockPitch = group(new BooleanSetting("Pitch lock", "Whether to lock your pitch angle", true)
+	public final BooleanSetting pitchSpoof = group(new BooleanSetting("Pitch spoof", "Glide at a faked pitch within 4 blocks of the ground; the camera stays where you look", true)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
 
-	public final NumberSetting pitch = group(new NumberSetting("Pitch", "The pitch angle to look at in bounce mode", 85, 0, 90, 1)
-		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && lockPitch.get()), "General");
+	public final NumberSetting pitch = group(new NumberSetting("Pitch", "The pitch the glide uses while it is faked", 75, 0, 90, 1)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && pitchSpoof.get()), "General");
 
-	public final BooleanSetting restart = group(new BooleanSetting("Restart", "Restarts flying with the elytra when rubberbanding", true)
+	public final BooleanSetting pitchControl = group(new BooleanSetting("Not while looking up", "Do not fake the pitch while you look above the horizon", false)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && pitchSpoof.get()), "General");
+
+	public final BooleanSetting yawSpoof = group(new BooleanSetting("Yaw spoof", "Turn the glide's yaw by the offset within a block of the ground; the camera stays put", false)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
 
-	public final NumberSetting restartDelay = group(new NumberSetting("Restart delay", "Ticks to wait before restarting the elytra after rubberbanding", 7, 0, 20, 1)
-		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && restart.get()), "General");
+	public final NumberSetting yawOffset = group(new NumberSetting("Yaw offset", "Degrees added to the glide's yaw (halved while against a wall)", 0, -1, 1, 0.5)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && yawSpoof.get()), "General");
 
-	public final BooleanSetting sprint = group(new BooleanSetting("Sprint constantly", "Sprint all the time; if off, only sprint while on the ground", true)
+	public final BooleanSetting reglide = group(new BooleanSetting("Re-glide", "Start gliding again the moment the server drops it, and relaunch off the ground", true)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
+
+	public final BooleanSetting reglideOnGround = group(new BooleanSetting("Glide on ground", "On: reopen the glide the moment the server drops it, even on the ground, so the hop is a glide jump. Off: hop first and open the glide in the air", true)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && reglide.get()), "General");
+
+	public final NumberSetting setbackWindow = group(new NumberSetting("Setback window", "Ticks after a setback, or a relaunch, without the pitch fake or another relaunch", 10, 0, 40, 1)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
+
+	public final NumberSetting velocityFreeze = group(new NumberSetting("Velocity freeze", "Ticks to leave sprint and re-glide alone after the server pushes you (0 = off)", 20, 0, 100, 1)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
+
+	public final BooleanSetting bounceDebug = group(new BooleanSetting("Bounce debug", "On every setback, print the last ticks of bounce state to chat", false)
+		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
+
+	public final BooleanSetting sprint = group(new BooleanSetting("Sprint constantly", "Keep sprint forced while you hold forward. Off sets it during the flight tick instead; still never forced without forward input", false)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
 
 	public final BooleanSetting manualTakeoff = group(new BooleanSetting("Manual takeoff", "Does not automatically take off", false)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
-
-	public final BooleanSetting smartPitch = group(new BooleanSetting("Smart pitch", "Look straight down while rising, nearly level while falling (the fastest bounce)", false)
-		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && lockPitch.get()), "General");
-
-	public final NumberSetting setbackPause = group(new NumberSetting("Setback pause", "Ticks to stop flying after the server sets you back", 5, 0, 100, 1)
-		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce), "General");
-
-	public final BooleanSetting minimizePackets = group(new BooleanSetting("Minimize packets", "Send the start-fly packet only when a take-off can work", true)
-		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && !manualTakeoff.get()), "General");
 
 	public final BooleanSetting laneKeeping = group(new BooleanSetting("Lane keeping", "Sneak-strafe back onto the locked line when you drift off it", false)
 		.visibleWhen(() -> flightMode.get() == ElytraFlightModes.Bounce && yawLockMode.get() != YawLock.None), "General");
@@ -428,8 +444,15 @@ public final class ElytraFly extends Module {
 			else e.packet = out;
 		});
 		listen(Events.PacketApply.Post.class, e -> {
-			if (e.packet() instanceof ClientboundSetEntityDataPacket data) tricks.onEntityData(data);
+			if (e.packet() instanceof ClientboundSetEntityDataPacket data) {
+				tricks.onEntityData(data);
+				if (mc().player != null && data.id() == mc().player.getId()) currentMode.onEntityData();
+			} else if (e.packet() instanceof ClientboundSetEntityMotionPacket motion && mc().player != null && motion.id() == mc().player.getId()) {
+				currentMode.onSelfMotion();
+			}
 		});
+		listen(Events.SendMovementPackets.Pre.class, e -> currentMode.onSendMovementPre());
+		listen(Events.SendMovementPackets.Post.class, e -> currentMode.onSendMovementPost());
 		listen(Events.KeyPress.class, e -> {
 			if (!e.screenOpen() && e.action() == 1) fireworkKey(e.key());
 		});
@@ -692,7 +715,17 @@ public final class ElytraFly extends Module {
 	/** LivingEntityMixin: the yaw the local player's glide physics use, or null for their own. */
 	public static Float glideHeading() {
 		ElytraFly m = ModuleManager.ifOn(ElytraFly.class);
-		return m == null || mc().player == null ? null : m.tricks.heading(mc().player);
+		if (m == null || mc().player == null) return null;
+		Float heading = m.tricks.heading(mc().player);
+		float offset = m.currentMode.glideYawOffset();
+		if (offset == 0) return heading;
+		return (heading != null ? heading : mc().player.getYRot()) + offset;
+	}
+
+	/** LivingEntityMixin: the pitch the local player's glide physics use, or null for their own. */
+	public static Float glidePitch() {
+		ElytraFly m = ModuleManager.ifOn(ElytraFly.class);
+		return m == null || mc().player == null ? null : m.currentMode.glidePitch();
 	}
 
 	/** SoundBlocker: fake-fly swaps armour on every glide start, so its equip sounds are muted. */
@@ -701,11 +734,26 @@ public final class ElytraFly extends Module {
 		return m != null && m.fakeFly.get() && (id.getPath().startsWith("item.armor.equip") || id.getPath().equals("item.elytra.flying"));
 	}
 
-	/** Re-sends START_FALL_FLYING for the local player (used by the flight modes). */
+	/**
+	 * Re-sends START_FALL_FLYING for the local player (used by the flight modes). A vanilla client only
+	 * sends it on the tick jump goes down, so with jump already held on the server's side the packet is
+	 * wrapped in a jump-released input before and the real input after.
+	 */
 	public static void sendCommand() {
 		LocalPlayer p = mc().player;
-		if (p == null || mc().getConnection() == null) return;
-		mc().getConnection().send(new ServerboundPlayerCommandPacket(p, ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
+		var connection = mc().getConnection();
+		if (p == null || connection == null) return;
+		Input held = ((LocalPlayerAccessor) p).coffeeclient$lastSentInput();
+		boolean release = held != null && held.jump();
+		if (release) connection.send(new ServerboundPlayerInputPacket(
+			new Input(held.forward(), held.backward(), held.left(), held.right(), false, held.shift(), held.sprint())));
+		connection.send(new ServerboundPlayerCommandPacket(p, ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
+		if (release) connection.send(new ServerboundPlayerInputPacket(held));
+	}
+
+	/** Used by the modes for debug lines. */
+	public void debug(String text) {
+		info(text);
 	}
 
 	/** Used by the modes for user-facing warnings. */

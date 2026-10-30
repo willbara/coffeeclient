@@ -172,7 +172,7 @@ public final class GlideTricks {
 		}
 		Float lock = heading(p);
 		if (lock == null && !ef.yawFlipFlop.get()) return m;
-		float yaw = lock != null ? lock : m.getYRot(p.getYRot());
+		float yaw = lock != null ? lock + ef.currentMode.glideYawOffset() : m.getYRot(p.getYRot());
 		if (ef.yawFlipFlop.get()) {
 			if (flip) yaw += 0.0001f;
 			flip = !flip;

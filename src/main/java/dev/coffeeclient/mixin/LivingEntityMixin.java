@@ -37,18 +37,22 @@ abstract class LivingEntityMixin {
 		return Float.isNaN(sent) ? yaw : sent;
 	}
 
-	/** ElytraFly heading lock: glide physics turn by the take-off yaw, not the camera's. */
+	/** ElytraFly: glide physics turn by the heading lock's yaw and Bounce's faked yaw and pitch, not the camera's. */
 	@WrapMethod(method = "updateFallFlyingMovement")
 	private Vec3 coffeeclient$glideHeading(Vec3 movement, Operation<Vec3> original) {
 		LivingEntity self = (LivingEntity) (Object) this;
-		Float heading = self == Minecraft.getInstance().player ? ElytraFly.glideHeading() : null;
-		if (heading == null) return original.call(movement);
-		float yaw = self.getYRot();
-		self.setYRot(heading);
+		boolean local = self == Minecraft.getInstance().player;
+		Float heading = local ? ElytraFly.glideHeading() : null;
+		Float pitch = local ? ElytraFly.glidePitch() : null;
+		if (heading == null && pitch == null) return original.call(movement);
+		float yaw = self.getYRot(), xRot = self.getXRot();
+		if (heading != null) self.setYRot(heading);
+		if (pitch != null) self.setXRot(pitch);
 		try {
 			return original.call(movement);
 		} finally {
 			self.setYRot(yaw);
+			self.setXRot(xRot);
 		}
 	}
 

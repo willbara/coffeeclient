@@ -73,6 +73,31 @@ public class ElytraFlightMode {
 	public void onPositionCorrection() {
 	}
 
+	/** The server just changed our own entity data (the glide flag among it). */
+	public void onEntityData() {
+	}
+
+	/** The server set our own velocity (knockback and the like). */
+	public void onSelfMotion() {
+	}
+
+	/** Around the tick's movement packet: a mode may turn the player for it, and turn them back after. */
+	public void onSendMovementPre() {
+	}
+
+	public void onSendMovementPost() {
+	}
+
+	/** The pitch the glide physics use in place of the player's own, or null. */
+	public Float glidePitch() {
+		return null;
+	}
+
+	/** Degrees the glide physics and the movement packet turn the yaw by. */
+	public float glideYawOffset() {
+		return 0;
+	}
+
 	/** Called after the movement vector for this tick has been decided. */
 	public void onMove() {
 	}
