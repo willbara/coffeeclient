@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/logo.png" alt="Coffee Client" width="600">
+  <img src="images/icon.png" alt="Coffee Client" width="128">
 </p>
 
 <p align="center">
