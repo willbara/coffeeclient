@@ -66,7 +66,8 @@ public final class ItemESP extends Module {
 	public final BooleanSetting nametags = group(new BooleanSetting("Nametags", "Label above each item", true), "Nametag");
 	public final BooleanSetting showCount = group(new BooleanSetting("Show count", "\"x3\" after the name", true), "Nametag");
 	public final BooleanSetting showDistance = group(new BooleanSetting("Show distance", "Distance in metres", false), "Nametag");
-	public final NumberSetting merge = group(new NumberSetting("Merge radius", "Combine same items this close into one label (0 = off)", 1.5, 0, 6, 0.5), "Nametag");
+	public final NumberSetting merge = group(new NumberSetting("Merge radius", "Combine matching items this close into one label (0 = off)", 1.5, 0, 6, 0.5), "Nametag");
+	public final BooleanSetting groupSimilar = group(new BooleanSetting("Group similar", "Also combine the same item with the same name when durability or enchantments differ", true), "Nametag");
 	public final BooleanSetting rarityText = group(new BooleanSetting("Rarity text color", "Name coloured by rarity", true), "Nametag");
 	public final ColorSetting textColor = group(new ColorSetting("Text color", "Label colour (when not by rarity)", 0xFFFFFFFF), "Nametag");
 	public final BooleanSetting background = group(new BooleanSetting("Background", "Panel behind the label", true), "Nametag");
@@ -81,6 +82,7 @@ public final class ItemESP extends Module {
 	public ItemESP() {
 		super("ItemESP", Category.RENDER, "Highlights dropped items with outlines and labels (opens its own window).");
 		outlineColor.visibleWhen(() -> !rarityColors.get());
+		groupSimilar.visibleWhen(() -> merge.get() > 0);
 		textColor.visibleWhen(() -> !rarityText.get());
 		items.visibleWhen(() -> filter.get() != Filter.ALL);
 		specialColor.visibleWhen(() -> !specialRainbow.get());
@@ -110,6 +112,15 @@ public final class ItemESP extends Module {
 			b.append(name, 0, Math.min(4, name.length())).append(' ').append(enchants.getLevel(e));
 		}
 		return b.toString();
+	}
+
+	/** Whether two drops share one label: the same stack, or with Group similar the same item and name. */
+	boolean sameGroup(ItemStack a, ItemStack b) {
+		if (ItemStack.isSameItemSameComponents(a, b)) return true;
+		if (!groupSimilar.get() || !ItemStack.isSameItem(a, b)) return false;
+		if (!a.getHoverName().getString().equals(b.getHoverName().getString())) return false;
+		// The enchantment text is part of the label, so only combine when it would read the same.
+		return !enchantments.get() || enchantText(a).equals(enchantText(b));
 	}
 
 	@Override
@@ -186,7 +197,7 @@ public final class ItemESP extends Module {
 			if (radius > 0) {
 				for (int i = 0; i < groups.size(); i++) {
 					Group g = groups.get(i);
-					if (ItemStack.isSameItemSameComponents(g.stack(), stack) && g.pos().distanceTo(pos) <= radius) {
+					if (g.pos().distanceTo(pos) <= radius && sameGroup(g.stack(), stack)) {
 						groups.set(i, new Group(g.stack(), g.pos(), g.count() + stack.getCount(), g.distance(), g.labelOffset()));
 						merged = true;
 						break;
