@@ -6,6 +6,7 @@ import dev.coffeeclient.core.Events;
 import dev.coffeeclient.module.Category;
 import dev.coffeeclient.module.Module;
 import dev.coffeeclient.setting.BooleanSetting;
+import dev.coffeeclient.setting.EnumSetting;
 import dev.coffeeclient.setting.ItemListSetting;
 import dev.coffeeclient.setting.KeybindSetting;
 import dev.coffeeclient.setting.NumberSetting;
@@ -57,6 +58,7 @@ import java.util.List;
  */
 public final class Organizer extends Module {
 	public final BooleanSetting sorting = group(new BooleanSetting("Sorting", "Sort a region with the sort key", true), "Sorting");
+	public final EnumSetting<SortMode> sortMode = group(new EnumSetting<>("Sort by", "Type groups similar items, Alphabetical uses the item id, Amount puts the largest stacks first", SortMode.ID), "Sorting");
 	public final KeybindSetting sortKey = group(new KeybindSetting("Sort key", "Key or mouse button that sorts", KeyNames.mouseKey(2)), "Sorting");
 	public final NumberSetting sortDelay = group(new NumberSetting("Sort delay", "Ticks between swaps", 1, 0, 10, 1), "Sorting");
 	public final BooleanSetting disableCreative = group(new BooleanSetting("Disable in creative", "Do not sort in the creative inventory", true), "Sorting");
@@ -79,9 +81,24 @@ public final class Organizer extends Module {
 	public final BooleanSetting bestArmour = group(new BooleanSetting("Best armour only", "Drop armour no better than what you wear (or a better spare)", true), "Cleaner");
 	public final NumberSetting cleanDelay = group(new NumberSetting("Clean delay", "Ticks between drops", 2, 0, 20, 1), "Cleaner");
 
+	public enum SortMode implements dev.coffeeclient.setting.Labeled {
+		TYPE("Type"), ID("Alphabetical"), COUNT("Amount");
+
+		private final String label;
+
+		SortMode(String label) {
+			this.label = label;
+		}
+
+		@Override
+		public String label() {
+			return label;
+		}
+	}
+
 	public enum SlotKind implements dev.coffeeclient.setting.Labeled {
 		NONE("Anything"), SWORD("Sword"), AXE("Axe"), PICKAXE("Pickaxe"), SHOVEL("Shovel"), HOE("Hoe"), BOW("Bow"), CROSSBOW("Crossbow"),
-		BLOCKS("Blocks"), FOOD("Food"), GOLDEN_APPLE("Golden apple"), PEARL("Ender pearl"), TOTEM("Totem"), WATER("Water bucket"),
+		ARMOUR("Armour"), BLOCKS("Blocks"), FOOD("Food"), GOLDEN_APPLE("Golden apple"), PEARL("Ender pearl"), TOTEM("Totem"), WATER("Water bucket"),
 		FIREWORK("Firework"), CRYSTAL("End crystal");
 
 		private final String label;
@@ -105,6 +122,7 @@ public final class Organizer extends Module {
 				case HOE -> s.is(ItemTags.HOES);
 				case BOW -> s.is(Items.BOW);
 				case CROSSBOW -> s.is(Items.CROSSBOW);
+				case ARMOUR -> s.has(DataComponents.EQUIPPABLE) && s.get(DataComponents.EQUIPPABLE).slot().isArmor();
 				case BLOCKS -> s.getItem() instanceof BlockItem b && !(b.getBlock() instanceof ShulkerBoxBlock);
 				case FOOD -> s.has(DataComponents.FOOD) && !s.is(Items.GOLDEN_APPLE) && !s.is(Items.ENCHANTED_GOLDEN_APPLE);
 				case GOLDEN_APPLE -> s.is(Items.GOLDEN_APPLE) || s.is(Items.ENCHANTED_GOLDEN_APPLE);
@@ -126,11 +144,27 @@ public final class Organizer extends Module {
 	public final ItemListSetting dumpItems = group(new ItemListSetting("Items to dump", "Items moved into the shulker box (shulker boxes themselves never are)", List.of()), "Quick shulker");
 	public final NumberSetting dumpDelay = group(new NumberSetting("Dump delay", "Ticks between moves", 1, 0, 10, 1), "Quick shulker");
 
-	private static final Comparator<ItemStack> SORT_ORDER = Comparator
-		.comparingInt((ItemStack stack) -> stack.isEmpty() ? 1 : 0)
-		.thenComparing(stack -> stack.isEmpty() ? "" : ItemIds.id(stack.getItem()))
-		.thenComparing(Comparator.comparingInt(ItemStack::getCount).reversed())
-		.thenComparing(stack -> stack.isEmpty() ? "" : stack.getHoverName().getString(), String.CASE_INSENSITIVE_ORDER);
+	static Comparator<ItemStack> sortOrder(SortMode mode) {
+		Comparator<ItemStack> byId = Comparator.comparing(stack -> stack.isEmpty() ? "" : ItemIds.id(stack.getItem()));
+		Comparator<ItemStack> byCount = Comparator.comparingInt(ItemStack::getCount).reversed();
+		return Comparator.comparingInt((ItemStack stack) -> stack.isEmpty() ? 1 : 0)
+			.thenComparing(switch (mode) {
+				case TYPE -> Comparator.comparingInt(Organizer::typeRank);
+				case ID -> byId;
+				case COUNT -> byCount;
+			})
+			.thenComparing(byId)
+			.thenComparing(byCount)
+			.thenComparing(stack -> stack.isEmpty() ? "" : stack.getHoverName().getString(), String.CASE_INSENSITIVE_ORDER);
+	}
+
+	/** Index in {@link SlotKind}: tools, armour, blocks, food, valuables, then everything else. */
+	private static int typeRank(ItemStack stack) {
+		for (SlotKind kind : SlotKind.values()) {
+			if (kind != SlotKind.NONE && kind.matches(stack)) return kind.ordinal();
+		}
+		return Integer.MAX_VALUE;
+	}
 
 	private List<Integer> sortSlots;
 	private List<ItemStack> sortTarget;
@@ -273,7 +307,7 @@ public final class Organizer extends Module {
 
 		List<ItemStack> target = new ArrayList<>(ids.size());
 		for (int id : ids) target.add(menu.slots.get(id).getItem().copy());
-		target.sort(SORT_ORDER);
+		target.sort(sortOrder(sortMode.get()));
 		sortSlots = ids;
 		sortTarget = target;
 		sortIndex = 0;
