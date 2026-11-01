@@ -396,7 +396,7 @@ public final class ChatTweaks extends Module {
 	// Mentions
 	// ---------------------------------------------------------------------------------------------
 
-	static final Pattern SENDER = Pattern.compile("^\\s*(?:\\[[^\\]]*\\]\\s*)*<?([A-Za-z0-9_]{2,16})>?:?\\s");
+	static final Pattern SENDER = Pattern.compile("^\\s*<?\\s*(?:\\[[^\\]]*\\]\\s*)*<?\\s*([A-Za-z0-9_]{2,16})[>»:]?\\s");
 	static final Pattern JOIN_LEAVE = Pattern.compile("^\\S+ (?:joined|left) the game$");
 
 	private Pattern mentionCached;
@@ -435,9 +435,22 @@ public final class ChatTweaks extends Module {
 		return mentionCached;
 	}
 
+	/** Where the message body starts in the rendered line: after the sender and rank prefix (0 if there is none). */
+	static int bodyStart(Component message, String text) {
+		if (message.getContents() instanceof TranslatableContents tr && tr.getArgs().length > 1
+			&& (tr.getKey().startsWith("chat.type.") || tr.getKey().startsWith("commands.message.display"))) {
+			Object body = tr.getArgs()[tr.getArgs().length - 1];
+			String bodyText = body instanceof Component c ? c.getString() : String.valueOf(body);
+			if (!bodyText.isEmpty() && text.endsWith(bodyText)) return text.length() - bodyText.length();
+		}
+		Matcher m = SENDER.matcher(text);
+		return m.find() ? m.end() : 0;
+	}
+
 	/**
 	 * Highlights your name in someone else's message and plays the ping. Lines you wrote yourself and
-	 * join/leave notices are skipped. Called from the chat mixin.
+	 * join/leave notices are skipped, and only the message body is scanned (not the sender prefix).
+	 * Called from the chat mixin.
 	 */
 	public static Component mention(Component message, boolean clientSide) {
 		ChatTweaks self = active(clientSide);
@@ -450,12 +463,19 @@ public final class ChatTweaks extends Module {
 		if (p == null || JOIN_LEAVE.matcher(text).matches()) return message;
 		Matcher sender = SENDER.matcher(text);
 		if (sender.find() && sender.group(1).equalsIgnoreCase(name)) return message;
-		if (!p.matcher(text).find()) return message;
+		int start = bodyStart(message, text);
+		Matcher body = p.matcher(text);
+		body.region(start, text.length());
+		if (!body.find()) return message;
 
 		int color = self.mentionColor.argb() & 0xFFFFFF;
 		MutableComponent out = Component.empty();
+		int[] offset = {0};
 		message.visit((style, segment) -> {
+			int from = Math.max(0, start - offset[0]);
+			offset[0] += segment.length();
 			Matcher m = p.matcher(segment);
+			m.region(Math.min(from, segment.length()), segment.length());
 			int last = 0;
 			while (m.find()) {
 				if (m.start() > last) out.append(Component.literal(segment.substring(last, m.start())).withStyle(style));

@@ -1,6 +1,9 @@
 package dev.coffeeclient.module.modules.misc;
 
+import net.minecraft.network.chat.Component;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,6 +18,28 @@ class ChatTweaksPatternTest {
 		m = ChatTweaks.SENDER.matcher("[VIP] Alex: hi");
 		assertTrue(m.find());
 		assertEquals("Alex", m.group(1));
+		m = ChatTweaks.SENDER.matcher("<[MVP+] Steve> hi");
+		assertTrue(m.find());
+		assertEquals("Steve", m.group(1));
+		m = ChatTweaks.SENDER.matcher("[Team] [VIP] Alex » hi");
+		assertTrue(m.find());
+		assertEquals("Alex", m.group(1));
+	}
+
+	@Test
+	void mentionsSkipTheSenderPrefix() {
+		var mention = ChatTweaks.mentionPattern("Steve", List.of(), false);
+		String text = "<[MVP+] Steve> hello there";
+		Component line = Component.literal(text);
+		String body = text.substring(ChatTweaks.bodyStart(line, text));
+		assertEquals("hello there", body);
+		assertFalse(mention.matcher(body).find());
+
+		line = Component.translatableWithFallback("chat.type.text", "<%s> %s",
+			Component.literal("[MVP+] Steve"), Component.literal("hey Steve"));
+		body = line.getString().substring(ChatTweaks.bodyStart(line, line.getString()));
+		assertEquals("hey Steve", body);
+		assertTrue(mention.matcher(body).find());
 	}
 
 	@Test
