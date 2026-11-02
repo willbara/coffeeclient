@@ -340,6 +340,11 @@ public abstract class Module {
 		return null;
 	}
 
+	/** An extra panel shown on the right of the config window (e.g. a history list), or null. */
+	public dev.coffeeclient.gui.widget.Widget sidePanel() {
+		return null;
+	}
+
 	/** Settings-only modules (e.g. Interface) expand instead of toggling. */
 	public boolean isToggleable() {
 		return true;

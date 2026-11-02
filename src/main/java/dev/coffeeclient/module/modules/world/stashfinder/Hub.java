@@ -13,6 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -107,6 +108,7 @@ public final class Hub {
 	public List<Found> tick(ClientLevel level, Player player) {
 		List<Found> found = new ArrayList<>();
 		ChunkPos here = player.chunkPosition();
+		String dimension = level.dimension().identifier().toString();
 		int radius = sf.scanRadius.intValue();
 		if (!here.equals(lastCenter)) {
 			lastCenter = here;
@@ -127,6 +129,7 @@ public final class Hub {
 				if (chunk == null) continue;
 				scanned.add(pos);
 				Map<Kind, List<AABB>> result = scan(level, chunk);
+				sf.rememberFinds(dimension, pos, result);
 				Map<Kind, List<AABB>> before = result.isEmpty() ? hits.remove(pos) : hits.put(pos, result);
 				for (Map.Entry<Kind, List<AABB>> e : result.entrySet()) {
 					if (before == null || !before.containsKey(e.getKey())) found.add(new Found(e.getKey(), e.getValue().getFirst()));
@@ -139,7 +142,8 @@ public final class Hub {
 		if (sf.miningTrails.get() && ticks % 20 == 0) {
 			for (MiningTrails.Trail t : trails.update(level, player, sf.trailScanDistance.get(), sf.trailMaxY.intValue(),
 				sf.trailJoin.get(), sf.trailMinDrops.intValue(), sf.trailLifetime.intValue())) {
-				var p = t.points().getFirst();
+				Vec3 p = t.points().getFirst();
+				sf.rememberTrail(dimension, p);
 				found.add(new Found(Kind.TRAIL, new AABB(p.x - 0.25, p.y, p.z - 0.25, p.x + 0.25, p.y + 0.5, p.z + 0.25)));
 			}
 		}

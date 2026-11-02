@@ -30,7 +30,7 @@ import java.util.Map;
 
 /**
  * Full window for modules with advanced configuration: settings grouped into sections on the left, and
- * the module's main selection list (if any) embedded on the right.
+ * the module's main selection list or custom side panel (if any) embedded on the right.
  */
 public class ModuleScreen extends CoffeeScreen {
 	private final Module module;
@@ -51,17 +51,19 @@ public class ModuleScreen extends CoffeeScreen {
 		rows.clear();
 		headers.clear();
 		Setting<?> embedded = module.embeddedList();
+		Widget sidePanel = module.sidePanel();
 		boolean embeddable = embedded instanceof IdListSetting || embedded instanceof StringListSetting;
+		boolean hasSide = embeddable || sidePanel != null;
 
 		// A 4:3 window centred on the screen. Height follows the width cap instead of filling the screen.
-		boolean wantSplit = embeddable && width >= 480;
+		boolean wantSplit = hasSide && width >= 480;
 		int[] frame = centred43(wantSplit ? 680 : 460);
 		frameX = frame[0];
 		frameY = frame[1];
 		frameW = frame[2];
 		frameH = frame[3];
 
-		boolean split = embeddable && frameW >= 432;
+		boolean split = hasSide && frameW >= 432;
 
 		int y = frameY + 4;
 		root.add(new Label(module.name(), Label.Style.TITLE)).setBounds(frameX + 8, y, Draw.width(module.name()) + 2, 14);
@@ -112,23 +114,21 @@ public class ModuleScreen extends CoffeeScreen {
 		embeddedField = null;
 		if (split) {
 			int lx = frameX + settingsW + 6;
-			root.add(new Panel(embedded.name()).subtitle(embedded::display)).setBounds(lx, contentY, listW, contentH);
-			Widget panel = switch (embedded) {
-				case IdListSetting l -> {
-					IdListPanel p = new IdListPanel(l);
-					embeddedField = p.searchField();
-					yield p;
-				}
-				case StringListSetting s -> {
-					StringListPanel p = new StringListPanel(s);
-					embeddedField = p.entryField();
-					yield p;
-				}
-				default -> null;
-			};
-			if (panel != null) {
-				root.add(panel);
-				panel.setBounds(lx + Panel.PAD, contentY + Panel.HEADER + 4, listW - Panel.PAD * 2, contentH - Panel.HEADER - 8);
+			if (sidePanel != null) {
+				root.add(sidePanel);
+				sidePanel.setBounds(lx, contentY, listW, contentH);
+			} else if (embedded instanceof IdListSetting l) {
+				root.add(new Panel(l.name()).subtitle(l::display)).setBounds(lx, contentY, listW, contentH);
+				IdListPanel p = new IdListPanel(l);
+				embeddedField = p.searchField();
+				root.add(p);
+				p.setBounds(lx + Panel.PAD, contentY + Panel.HEADER + 4, listW - Panel.PAD * 2, contentH - Panel.HEADER - 8);
+			} else if (embedded instanceof StringListSetting s) {
+				root.add(new Panel(s.name()).subtitle(s::display)).setBounds(lx, contentY, listW, contentH);
+				StringListPanel p = new StringListPanel(s);
+				embeddedField = p.entryField();
+				root.add(p);
+				p.setBounds(lx + Panel.PAD, contentY + Panel.HEADER + 4, listW - Panel.PAD * 2, contentH - Panel.HEADER - 8);
 			}
 		}
 	}

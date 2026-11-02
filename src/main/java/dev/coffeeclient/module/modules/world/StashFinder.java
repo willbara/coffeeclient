@@ -1,26 +1,27 @@
 package dev.coffeeclient.module.modules.world;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.coffeeclient.config.ConfigManager;
 import dev.coffeeclient.core.CoffeeClient;
 import dev.coffeeclient.core.EventBus;
 import dev.coffeeclient.core.Events;
+import dev.coffeeclient.gui.Ui;
+import dev.coffeeclient.gui.screen.StashHistoryPanel;
+import dev.coffeeclient.gui.widget.Widget;
 import dev.coffeeclient.hud.HudElement;
 import dev.coffeeclient.hud.ModuleHudElement;
 import dev.coffeeclient.module.Category;
 import dev.coffeeclient.module.Module;
-import dev.coffeeclient.gui.Ui;
 import dev.coffeeclient.render.EspRender;
 import dev.coffeeclient.render.Tracers;
 import dev.coffeeclient.util.WorldProjector;
 import dev.coffeeclient.render.WorldOverlays;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.coffeeclient.module.modules.render.NaturalLoot;
+import dev.coffeeclient.module.modules.world.stashfinder.HistoryRow;
 import dev.coffeeclient.module.modules.world.stashfinder.Hub;
 import dev.coffeeclient.module.modules.world.stashfinder.Kind;
+import dev.coffeeclient.module.modules.world.stashfinder.StashHistory;
 import dev.coffeeclient.module.modules.world.stashfinder.Zones;
 import dev.coffeeclient.module.modules.world.stashfinder.MiningTrails;
 import dev.coffeeclient.module.modules.world.stashfinder.NaturalBlocks;
@@ -67,8 +68,8 @@ import java.util.Objects;
 import java.util.TreeMap;
 
 /**
- * Finds player storage by scanning block entities in loaded chunks, remembering the chunks per server
- * in {@code config/coffeeclient/stashes}.
+ * Finds player storage by scanning block entities in loaded chunks, remembering stashes and
+ * base-hunting finds per server in {@code config/coffeeclient/stashes}.
  * Found chunks are shown with Coffee's existing tracer/label style and a HUD summary instead.
  *
  * <p>Also a base-hunting hub: detectors from for man-made blocks, dug tunnels, holes and
@@ -78,6 +79,8 @@ import java.util.TreeMap;
 public final class StashFinder extends Module {
 	public enum Notify { Chat, Toast, Both, Off }
 
+	/** How often a continuously visible row refreshes its last-seen time. */
+	private static final long SEEN_REFRESH_MS = 30_000L;
 	private static final List<String> DEFAULT_TYPES = List.of(
 		"minecraft:barrel", "minecraft:blast_furnace", "minecraft:chest", "minecraft:dispenser",
 		"minecraft:dropper", "minecraft:ender_chest", "minecraft:furnace", "minecraft:hopper",
@@ -108,7 +111,7 @@ public final class StashFinder extends Module {
 	public final BooleanSetting chunkColumns = group(new BooleanSetting("Chunk columns", "Draw a column at each found chunk", false), "Render");
 	public final BooleanSetting hudSummary = group(new BooleanSetting("HUD summary", "Show stash totals on the HUD", true), "Render");
 
-	public final ActionSetting clear = group(new ActionSetting("Clear stashes", "Forget every stash for this server", this::clearAll), "Actions");
+	public final ActionSetting clear = group(new ActionSetting("Clear history", "Forget every remembered stash and find for this server", this::clearAll), "Actions");
 
 	// Base hunting: shared
 
@@ -193,14 +196,16 @@ public final class StashFinder extends Module {
 	private List<Integer> detectorTargetColors = List.of();
 	private List<AABB> roofItemBoxes = List.of();
 
-	private record Stash(String dimension, int x, int z, int total, Map<String, Integer> counts) {
-	}
-
 	private final NaturalLoot loot = new NaturalLoot();
-	private final Map<String, Stash> stashes = new LinkedHashMap<>();
+	private final Map<String, StashHistory.Stash> stashes = new LinkedHashMap<>();
+	private final Map<String, StashHistory.Find> finds = new LinkedHashMap<>();
 	private final ModuleHudElement element = new ModuleHudElement(this, "stash_finder", "Stash finder",
 		this::hudLines, (w, h) -> new int[] {2, h / 2});
+	private StashHistoryPanel historyPanel;
 	private String checkedServer;
+	private String focused;
+	private long historyVersion;
+	private long historyGeneration;
 	private int ticks;
 	private boolean dirty;
 
@@ -252,6 +257,13 @@ public final class StashFinder extends Module {
 	}
 
 	@Override
+	public Widget sidePanel() {
+		ensureHistoryLoaded();
+		if (historyPanel == null) historyPanel = new StashHistoryPanel(this);
+		return historyPanel;
+	}
+
+	@Override
 	protected void init(EventBus bus) {
 		ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> {
 			if (!isEnabled()) return;
@@ -263,7 +275,11 @@ public final class StashFinder extends Module {
 	protected void onDisable() {
 		save();
 		stashes.clear();
+		finds.clear();
+		focused = null;
 		checkedServer = null;
+		historyVersion++;
+		historyGeneration++;
 		hub.clear();
 		hubDimension = null;
 		scoredZones = List.of();
@@ -284,14 +300,7 @@ public final class StashFinder extends Module {
 		Minecraft mc = mc();
 		if (mc.level == null || mc.player == null) return;
 
-		String server = serverKey(mc);
-		if (!Objects.equals(server, checkedServer)) {
-			save();
-			checkedServer = server;
-			stashes.clear();
-			dirty = false;
-			load(server);
-		}
+		ensureServer(mc);
 
 		if (++ticks % rescanInterval.intValue() == 0) {
 			int cx = mc.player.chunkPosition().x(), cz = mc.player.chunkPosition().z();
@@ -415,14 +424,21 @@ public final class StashFinder extends Module {
 		detectorTargetColors = targets.stream().map(Box::color).toList();
 	}
 
-	/** Scans one chunk and records, updates or removes its stash entry. */
+	/**
+	 * Scans one chunk and records or updates its stash entry. A chunk that no longer qualifies stays in
+	 * history with its new count, but is not drawn or reported as an active stash.
+	 */
 	private void scanChunk(LevelChunk chunk) {
 		Minecraft mc = mc();
 		if (!isEnabled() || !containers.get() || mc.level == null || chunk.isEmpty()) return;
+		// A chunk can load before the first tick; load this server's history before recording into it.
+		ensureServer(mc);
 
 		String dimension = mc.level.dimension().identifier().toString();
 		ChunkPos pos = chunk.getPos();
 		Map<String, Integer> counts = new TreeMap<>();
+		long ySum = 0;
+		int yCount = 0;
 		boolean skipNatural = skipTrialChambers.get() || skipSpawnerRooms.get() || skipVillages.get();
 		if (skipNatural) loot.beginScan(mc.level);
 		for (BlockEntity entity : chunk.getBlockEntities().values()) {
@@ -432,23 +448,31 @@ public final class StashFinder extends Module {
 			if (!types.contains(key)) continue;
 			if (skipNatural && loot.hide(mc.level, entity, skipSpawnerRooms.get(), skipTrialChambers.get(), skipVillages.get())) continue;
 			counts.merge(key, 1, Integer::sum);
+			ySum += entity.getBlockPos().getY();
+			yCount++;
 		}
 		int total = counts.values().stream().mapToInt(Integer::intValue).sum();
 		double spawnDistance = Math.hypot(pos.getMinBlockX() + 8.0, pos.getMinBlockZ() + 8.0);
 		boolean tooClose = spawnDistance < minDistance.get();
-		String key = dimension + "|" + pos.x() + "," + pos.z();
+		boolean qualifies = total >= minCount.intValue() && !tooClose;
+		String key = StashHistory.stashKey(dimension, pos.x(), pos.z());
+		StashHistory.Stash previous = stashes.get(key);
+		if (previous == null && !qualifies) return;
 
-		if (total < minCount.intValue() || tooClose) {
-			if (stashes.remove(key) != null) dirty = true;
-			return;
-		}
-		Stash stash = new Stash(dimension, pos.x(), pos.z(), total, Map.copyOf(counts));
-		Stash previous = stashes.get(key);
-		if (stash.equals(previous)) return;
-		stashes.put(key, stash);
+		int y = yCount == 0 ? previous == null ? 64 : previous.y() : (int) Math.round((double) ySum / yCount);
+		long now = System.currentTimeMillis();
+		long lastSeen = previous == null || now - previous.lastSeen() >= SEEN_REFRESH_MS ? now : previous.lastSeen();
+		StashHistory.Stash current = new StashHistory.Stash(dimension, pos.x(), pos.z(), y, total, Map.copyOf(counts),
+			now, lastSeen, StashHistory.State.NEW);
+		StashHistory.Stash merged = previous == null ? current : StashHistory.merge(previous, current);
+		if (merged.equals(previous)) return;
+		stashes.put(key, merged);
 		dirty = true;
-		if (previous == null) report("Found stash at " + centerX(stash) + ", " + centerZ(stash) + " (" + total + " containers)");
-		else report("Stash at " + centerX(stash) + ", " + centerZ(stash) + " now has " + total + " containers");
+		historyVersion++;
+		if (qualifies && (previous == null || previous.total() != total)) {
+			if (previous == null) report("Found stash at " + merged.centerX() + ", " + merged.centerZ() + " (" + total + " containers)");
+			else report("Stash at " + merged.centerX() + ", " + merged.centerZ() + " now has " + total + " containers");
+		}
 	}
 
 	private void report(String text) {
@@ -471,7 +495,11 @@ public final class StashFinder extends Module {
 
 	private void clearAll() {
 		stashes.clear();
+		finds.clear();
+		focused = null;
 		dirty = true;
+		historyVersion++;
+		historyGeneration++;
 		save();
 	}
 
@@ -495,77 +523,68 @@ public final class StashFinder extends Module {
 		return config.directory().resolve("stashes").resolve(server + ".json");
 	}
 
-	private void load(String server) {
-		Path path = file(server);
-		Async.io(() -> {
-			Map<String, Stash> loaded = read(path);
-			if (loaded.isEmpty()) return;
-			Minecraft.getInstance().execute(() -> {
-				if (!server.equals(checkedServer)) return;
-				// A save may have run before this merge and written only the new stashes: save again.
-				loaded.forEach((key, stash) -> {
-					if (stashes.putIfAbsent(key, stash) == null) dirty = true;
-				});
-			});
-		});
+	/** Loads this server's history when the config screen is opened without the module running. */
+	private void ensureHistoryLoaded() {
+		Minecraft mc = mc();
+		if (mc.level != null) ensureServer(mc);
 	}
 
-	private static Map<String, Stash> read(Path path) {
-		Map<String, Stash> result = new LinkedHashMap<>();
-		JsonObject root = JsonFiles.read(path);
-		if (root == null || !root.has("stashes") || !root.get("stashes").isJsonArray()) return result;
-		int skipped = 0;
-		for (JsonElement element : root.getAsJsonArray("stashes")) {
-			if (!element.isJsonObject()) {
-				skipped++;
-				continue;
-			}
-			try {
-				JsonObject object = element.getAsJsonObject();
-				String dimension = object.get("dim").getAsString();
-				int x = object.get("x").getAsInt();
-				int z = object.get("z").getAsInt();
-				int total = object.get("total").getAsInt();
-				Map<String, Integer> counts = new TreeMap<>();
-				if (object.has("counts") && object.get("counts").isJsonObject()) {
-					for (Map.Entry<String, JsonElement> entry : object.getAsJsonObject("counts").entrySet()) {
-						counts.put(entry.getKey(), entry.getValue().getAsInt());
-					}
+	private void ensureServer(Minecraft mc) {
+		String server = serverKey(mc);
+		if (Objects.equals(server, checkedServer)) return;
+		save();
+		checkedServer = server;
+		stashes.clear();
+		finds.clear();
+		focused = null;
+		dirty = false;
+		historyVersion++;
+		long generation = ++historyGeneration;
+		load(server, generation);
+	}
+
+	private void load(String server, long generation) {
+		Path path = file(server);
+		Async.io(() -> {
+			StashHistory.Loaded loaded = StashHistory.read(path);
+			if (loaded.isEmpty()) return;
+			Minecraft.getInstance().execute(() -> {
+				if (!server.equals(checkedServer) || generation != historyGeneration) return;
+				boolean changed = false;
+				for (StashHistory.Stash stash : loaded.stashes().values()) {
+					StashHistory.Stash existing = stashes.get(stash.key());
+					StashHistory.Stash merged = existing == null ? stash : StashHistory.merge(stash, existing);
+					if (merged.equals(existing)) continue;
+					stashes.put(stash.key(), merged);
+					changed = true;
 				}
-				result.put(dimension + "|" + x + "," + z, new Stash(dimension, x, z, total, Map.copyOf(counts)));
-			} catch (RuntimeException e) {
-				// skip a malformed row rather than losing the whole file
-				skipped++;
-			}
-		}
-		if (skipped > 0) CoffeeClient.LOG.warn("[StashFinder] Skipped {} unreadable rows in {}", skipped, path.getFileName());
-		return result;
+				for (StashHistory.Find find : loaded.finds().values()) {
+					StashHistory.Find existing = finds.get(find.key());
+					StashHistory.Find merged = existing == null ? find : StashHistory.merge(find, existing);
+					if (merged.equals(existing)) continue;
+					finds.put(find.key(), merged);
+					changed = true;
+				}
+				// A save may have run before this merge and written only the new rows: save again.
+				if (changed) {
+					dirty = true;
+					historyVersion++;
+				}
+			});
+		});
 	}
 
 	private void save() {
 		if (!dirty || checkedServer == null) return;
 		dirty = false;
 		String server = checkedServer;
-		JsonObject root = new JsonObject();
-		JsonArray array = new JsonArray();
-		for (Stash stash : stashes.values()) {
-			JsonObject object = new JsonObject();
-			object.addProperty("dim", stash.dimension());
-			object.addProperty("x", stash.x());
-			object.addProperty("z", stash.z());
-			object.addProperty("total", stash.total());
-			JsonObject counts = new JsonObject();
-			stash.counts().forEach(counts::addProperty);
-			object.add("counts", counts);
-			array.add(object);
-		}
-		root.add("stashes", array);
+		String json = StashHistory.toJson(stashes, finds);
 		Path path = file(server);
 		Async.io(() -> {
 			try {
-				JsonFiles.writeAtomic(path, JsonFiles.GSON.toJson(root));
+				JsonFiles.writeAtomic(path, json);
 			} catch (IOException e) {
-				CoffeeClient.LOG.warn("Could not save stashes to {}: {}", path, e.getMessage());
+				CoffeeClient.LOG.warn("Could not save stash history to {}: {}", path, e.getMessage());
 			}
 		});
 	}
@@ -582,25 +601,164 @@ public final class StashFinder extends Module {
 		return name.toString();
 	}
 
-	private static int centerX(Stash stash) {
-		return stash.x() * 16 + 8;
+	/** Records one row per detector kind in a scanned chunk, keeping the first time it was seen. */
+	public void rememberFinds(String dimension, ChunkPos chunk, Map<Kind, List<AABB>> result) {
+		if (result.isEmpty()) return;
+		long now = System.currentTimeMillis();
+		boolean changed = false;
+		for (Map.Entry<Kind, List<AABB>> entry : result.entrySet()) {
+			List<AABB> boxes = entry.getValue();
+			if (boxes.isEmpty()) continue;
+			double x = 0, y = 0, z = 0;
+			for (AABB box : boxes) {
+				Vec3 center = box.getCenter();
+				x += center.x;
+				y += center.y;
+				z += center.z;
+			}
+			int bx = (int) Math.floor(x / boxes.size());
+			int by = (int) Math.floor(y / boxes.size());
+			int bz = (int) Math.floor(z / boxes.size());
+			String key = StashHistory.findKey(dimension, entry.getKey(), chunk.x(), chunk.z());
+			StashHistory.Find previous = finds.get(key);
+			long lastSeen = previous == null || now - previous.lastSeen() >= SEEN_REFRESH_MS ? now : previous.lastSeen();
+			StashHistory.Find current = new StashHistory.Find(dimension, entry.getKey(), bx, by, bz, boxes.size(),
+				now, lastSeen, StashHistory.State.NEW);
+			StashHistory.Find merged = previous == null ? current : StashHistory.merge(previous, current);
+			if (merged.equals(previous)) continue;
+			finds.put(key, merged);
+			changed = true;
+		}
+		if (changed) {
+			dirty = true;
+			historyVersion++;
+		}
 	}
 
-	private static int centerZ(Stash stash) {
-		return stash.z() * 16 + 8;
+	/** Records a mining trail's first drop, one row per chunk and kind. */
+	public void rememberTrail(String dimension, Vec3 point) {
+		int x = (int) Math.floor(point.x);
+		int y = (int) Math.floor(point.y);
+		int z = (int) Math.floor(point.z);
+		String key = StashHistory.findKey(dimension, Kind.TRAIL, x >> 4, z >> 4);
+		StashHistory.Find previous = finds.get(key);
+		long now = System.currentTimeMillis();
+		int count = previous == null ? 1 : previous.count() + 1;
+		long lastSeen = previous == null || now - previous.lastSeen() >= SEEN_REFRESH_MS ? now : previous.lastSeen();
+		StashHistory.Find current = new StashHistory.Find(dimension, Kind.TRAIL, x, y, z, count,
+			now, lastSeen, StashHistory.State.NEW);
+		StashHistory.Find merged = previous == null ? current : StashHistory.merge(previous, current);
+		if (merged.equals(previous)) return;
+		finds.put(key, merged);
+		dirty = true;
+		historyVersion++;
 	}
 
-	/** The nearest stash in the current dimension, or null. */
-	private Stash nearest() {
+	/** Every remembered stash and find for this server, for the history panel. */
+	public List<HistoryRow> historyRows() {
+		ensureHistoryLoaded();
+		List<HistoryRow> rows = new ArrayList<>(stashes.size() + finds.size());
+		for (StashHistory.Stash stash : stashes.values()) rows.add(stashRow(stash));
+		for (StashHistory.Find find : finds.values()) rows.add(findRow(find));
+		return rows;
+	}
+
+	public int historyCount() {
+		ensureHistoryLoaded();
+		return stashes.size() + finds.size();
+	}
+
+	public long historyVersion() {
+		ensureHistoryLoaded();
+		return historyVersion;
+	}
+
+	/** Cycles a row through new, visited and cleared, then saves it. */
+	public void cycleState(String key) {
+		StashHistory.Stash stash = stashes.get(key);
+		if (stash != null) {
+			stashes.put(key, new StashHistory.Stash(stash.dimension(), stash.x(), stash.z(), stash.y(), stash.total(),
+				stash.counts(), stash.firstSeen(), stash.lastSeen(), stash.state().next()));
+		} else {
+			StashHistory.Find find = finds.get(key);
+			if (find == null) return;
+			finds.put(key, new StashHistory.Find(find.dimension(), find.kind(), find.x(), find.y(), find.z(), find.count(),
+				find.firstSeen(), find.lastSeen(), find.state().next()));
+		}
+		dirty = true;
+		historyVersion++;
+		save();
+	}
+
+	/** Focuses one row's tracer, or stops focusing it when it already is. */
+	public void focus(String key) {
+		focused = key.equals(focused) ? null : key;
+		historyVersion++;
+	}
+
+	public boolean isFocused(String key) {
+		return key.equals(focused);
+	}
+
+	private static HistoryRow stashRow(StashHistory.Stash stash) {
+		return new HistoryRow(stash.key(), stash.dimension(), null, stash.centerX(), stash.y(), stash.centerZ(),
+			stash.total(), stashDetail(stash), stash.firstSeen(), stash.lastSeen(), stash.state());
+	}
+
+	private static HistoryRow findRow(StashHistory.Find find) {
+		return new HistoryRow(find.key(), find.dimension(), find.kind(), find.x(), find.y(), find.z(), find.count(),
+			findDetail(find), find.firstSeen(), find.lastSeen(), find.state());
+	}
+
+	private HistoryRow focusedRow() {
+		StashHistory.Stash stash = stashes.get(focused);
+		if (stash != null) return stashRow(stash);
+		StashHistory.Find find = finds.get(focused);
+		return find == null ? null : findRow(find);
+	}
+
+	private static String stashDetail(StashHistory.Stash stash) {
+		StringBuilder detail = new StringBuilder();
+		detail.append(stash.total()).append(stash.total() == 1 ? " container" : " containers");
+		List<Map.Entry<String, Integer>> top = new ArrayList<>(stash.counts().entrySet());
+		top.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+		if (!top.isEmpty()) {
+			detail.append(" · ");
+			int shown = Math.min(3, top.size());
+			for (int i = 0; i < shown; i++) {
+				if (i > 0) detail.append(", ");
+				Map.Entry<String, Integer> entry = top.get(i);
+				detail.append(typeName(entry.getKey())).append(' ').append(entry.getValue());
+			}
+			if (top.size() > shown) detail.append(" +").append(top.size() - shown);
+		}
+		return detail.toString();
+	}
+
+	private static String findDetail(StashHistory.Find find) {
+		String unit = find.kind() == Kind.TRAIL ? "drop" : "find";
+		return find.count() + " " + unit + (find.count() == 1 ? "" : "s")
+			+ " · chunk " + (find.x() >> 4) + ", " + (find.z() >> 4);
+	}
+
+	/** Whether a remembered stash is still worth drawing, counting or reporting. */
+	private boolean active(StashHistory.Stash stash) {
+		return stash.state() != StashHistory.State.CLEARED
+			&& stash.total() >= minCount.intValue()
+			&& Math.hypot(stash.centerX(), stash.centerZ()) >= minDistance.get();
+	}
+
+	/** The nearest active stash in the current dimension, or null. */
+	private StashHistory.Stash nearest() {
 		Minecraft mc = mc();
 		if (mc.level == null || mc.player == null) return null;
 		String dimension = mc.level.dimension().identifier().toString();
-		Stash best = null;
+		StashHistory.Stash best = null;
 		double bestDistance = Double.MAX_VALUE;
-		for (Stash stash : stashes.values()) {
-			if (!stash.dimension().equals(dimension)) continue;
-			double dx = centerX(stash) - mc.player.getX();
-			double dz = centerZ(stash) - mc.player.getZ();
+		for (StashHistory.Stash stash : stashes.values()) {
+			if (!stash.dimension().equals(dimension) || !active(stash)) continue;
+			double dx = stash.centerX() - mc.player.getX();
+			double dz = stash.centerZ() - mc.player.getZ();
 			double distance = dx * dx + dz * dz;
 			if (distance < bestDistance) {
 				bestDistance = distance;
@@ -614,16 +772,21 @@ public final class StashFinder extends Module {
 		Minecraft mc = mc();
 		List<String[]> lines = new ArrayList<>();
 		String dimension = mc.level == null ? "" : mc.level.dimension().identifier().toString();
-		long count = stashes.values().stream().filter(stash -> stash.dimension().equals(dimension)).count();
+		long count = stashes.values().stream().filter(stash -> stash.dimension().equals(dimension) && active(stash)).count();
 		lines.add(ModuleHudElement.row("Stashes", count));
-		int finds = 0;
-		for (Map<Kind, List<AABB>> perChunk : hub.hits().values()) for (List<AABB> list : perChunk.values()) finds += list.size();
-		if (finds > 0) lines.add(ModuleHudElement.row("Base finds", finds));
-		Stash nearest = nearest();
+		int findCount = 0;
+		for (Map<Kind, List<AABB>> perChunk : hub.hits().values()) for (List<AABB> list : perChunk.values()) findCount += list.size();
+		if (findCount > 0) lines.add(ModuleHudElement.row("Base finds", findCount));
+		StashHistory.Stash nearest = nearest();
 		if (nearest != null) {
 			Minecraft client = mc();
-			double distance = client.player == null ? 0 : Math.hypot(centerX(nearest) - client.player.getX(), centerZ(nearest) - client.player.getZ());
-			lines.add(ModuleHudElement.row("Nearest", Coords.format(centerX(nearest)) + ", " + Coords.format(centerZ(nearest)) + String.format(Locale.ROOT, " (%.0fm)", distance)));
+			double distance = client.player == null ? 0 : Math.hypot(nearest.centerX() - client.player.getX(), nearest.centerZ() - client.player.getZ());
+			lines.add(ModuleHudElement.row("Nearest", Coords.format(nearest.centerX()) + ", " + Coords.format(nearest.centerZ()) + String.format(Locale.ROOT, " (%.0fm)", distance)));
+		}
+		HistoryRow focus = focusedRow();
+		if (focus != null) {
+			String title = focus.kind() == null ? "Stash" : focus.kind().label;
+			lines.add(ModuleHudElement.row("Focus", title + " at " + Coords.xyz(focus.x(), focus.y(), focus.z())));
 		}
 		return lines;
 	}
@@ -638,10 +801,10 @@ public final class StashFinder extends Module {
 		float height = mc.level.getHeight();
 		float bottom = mc.level.getMinY();
 		if (chunkColumns.get()) {
-			for (Stash stash : stashes.values()) {
-				if (!stash.dimension().equals(dimension)) continue;
-				double dx = centerX(stash) + 0.5 - cameraPos.x;
-				double dz = centerZ(stash) + 0.5 - cameraPos.z;
+			for (StashHistory.Stash stash : stashes.values()) {
+				if (!stash.dimension().equals(dimension) || !active(stash)) continue;
+				double dx = stash.centerX() + 0.5 - cameraPos.x;
+				double dz = stash.centerZ() + 0.5 - cameraPos.z;
 				if (Math.hypot(dx, dz) > maxDistance.get()) continue;
 				poseStack.pushPose();
 				poseStack.translate(dx, bottom - cameraPos.y, dz);
@@ -651,17 +814,24 @@ public final class StashFinder extends Module {
 			}
 		}
 		// Tracers at the player's height, so they read as a heading on the horizon.
-		if (!stashTracers.get() || tracerStyle.get() != Tracers.Style.Smooth) return;
 		VertexConsumer tracers = null;
-		int tracerArgb = Colors.withAlpha(tracerColor.argb(), 0x99);
-		double y = mc.player.getY();
-		for (Stash stash : stashes.values()) {
-			if (!stash.dimension().equals(dimension)) continue;
-			double x = centerX(stash) + 0.5, z = centerZ(stash) + 0.5;
-			double distance = cameraPos.distanceTo(new Vec3(x, y, z));
-			if (distance > maxDistance.get() || distance < hideCloser.get()) continue;
+		if (stashTracers.get() && tracerStyle.get() == Tracers.Style.Smooth) {
+			int tracerArgb = Colors.withAlpha(tracerColor.argb(), 0x99);
+			double y = mc.player.getY();
+			for (StashHistory.Stash stash : stashes.values()) {
+				if (!stash.dimension().equals(dimension) || !active(stash)) continue;
+				double x = stash.centerX() + 0.5, z = stash.centerZ() + 0.5;
+				double distance = cameraPos.distanceTo(new Vec3(x, y, z));
+				if (distance > maxDistance.get() || distance < hideCloser.get()) continue;
+				if (tracers == null) tracers = EspRender.tracerBuffer();
+				EspRender.tracer(tracers, x, y, z, tracerArgb, 1f, cameraPos);
+			}
+		}
+		// The focused history row has its own white tracer, independent of the stash tracer settings.
+		HistoryRow focus = focusedRow();
+		if (focus != null && tracerStyle.get() == Tracers.Style.Smooth && dimension.equals(focus.dimension())) {
 			if (tracers == null) tracers = EspRender.tracerBuffer();
-			EspRender.tracer(tracers, x, y, z, tracerArgb, 1f, cameraPos);
+			EspRender.tracer(tracers, focus.x() + 0.5, focus.y() + 0.5, focus.z() + 0.5, 0xCCFFFFFF, 1f, cameraPos);
 		}
 	}
 
@@ -728,15 +898,24 @@ public final class StashFinder extends Module {
 				Tracers.pixel(ui, projector, t.x, t.y, t.z, 0x99000000 | detectorTargetColors.get(i), 1);
 			}
 		}
-		if (!stashTracers.get() || tracerStyle.get() != Tracers.Style.Classic || mc.level == null || mc.player == null) return;
+		if (mc.level == null || mc.player == null) return;
 		String dimension = mc.level.dimension().identifier().toString();
-		int argb = Colors.withAlpha(tracerColor.argb(), 0x99);
-		for (Stash stash : stashes.values()) {
-			if (!stash.dimension().equals(dimension)) continue;
-			double x = centerX(stash) + 0.5, z = centerZ(stash) + 0.5;
-			double distance = projector.distance(x, mc.player.getY(), z);
-			if (distance > maxDistance.get() || distance < hideCloser.get()) continue;
-			Tracers.pixel(ui, projector, x, mc.player.getY(), z, argb, 1);
+		if (stashTracers.get() && tracerStyle.get() == Tracers.Style.Classic) {
+			int argb = Colors.withAlpha(tracerColor.argb(), 0x99);
+			for (StashHistory.Stash stash : stashes.values()) {
+				if (!stash.dimension().equals(dimension) || !active(stash)) continue;
+				double x = stash.centerX() + 0.5, z = stash.centerZ() + 0.5;
+				double distance = projector.distance(x, mc.player.getY(), z);
+				if (distance > maxDistance.get() || distance < hideCloser.get()) continue;
+				Tracers.pixel(ui, projector, x, mc.player.getY(), z, argb, 1);
+			}
+		}
+		// Drawn last so the focused row's white line is never hidden by a stash tracer on top of it.
+		if (tracerStyle.get() == Tracers.Style.Classic) {
+			HistoryRow focus = focusedRow();
+			if (focus != null && dimension.equals(focus.dimension())) {
+				Tracers.pixel(ui, projector, focus.x() + 0.5, focus.y() + 0.5, focus.z() + 0.5, 0xCCFFFFFF, 1);
+			}
 		}
 	}
 }
