@@ -3,6 +3,7 @@ package dev.coffeeclient.mixin;
 import dev.coffeeclient.core.CoffeeClient;
 import dev.coffeeclient.module.ModuleManager;
 import dev.coffeeclient.module.modules.player.BreakDelay;
+import dev.coffeeclient.module.modules.player.SpeedMine;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.core.BlockPos;
@@ -14,6 +15,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.BlockHitResult;
 import dev.coffeeclient.core.Events;
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import org.spongepowered.asm.mixin.Mixin;
@@ -22,7 +24,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** BreakDelay, the block-interaction event and the attack event. */
+/** BreakDelay, SpeedMine, the block-interaction event and the attack event. */
 @Mixin(MultiPlayerGameMode.class)
 abstract class MultiPlayerGameModeMixin {
 	/** AutoTotem's server-side totem: no slot resync on the tick, only (as vanilla does) before an action. */
@@ -52,11 +54,28 @@ abstract class MultiPlayerGameModeMixin {
 		if (dev.coffeeclient.module.modules.player.PacketMine.takeOver(pos, dir)) cir.setReturnValue(true);
 	}
 
-	@Inject(method = "startDestroyBlock", at = @At("RETURN"))
-	private void coffeeclient$breakDelay(BlockPos pos, Direction dir, CallbackInfoReturnable<Boolean> cir) {
-		if (!ModuleManager.on(BreakDelay.class)) return;
-		int cooldown = CoffeeClient.modules().get(BreakDelay.class).cooldown();
-		((MultiPlayerGameModeAccessor) this).coffeeclient$setDestroyDelay(cooldown);
+	/** SpeedMine: a click on a block one tick breaks past Finish at breaks it at once. */
+	@Inject(method = "startDestroyBlock", at = @At("HEAD"), cancellable = true)
+	private void coffeeclient$instamine(BlockPos pos, Direction dir, CallbackInfoReturnable<Boolean> cir) {
+		if (SpeedMine.instamine(pos, dir)) cir.setReturnValue(true);
+	}
+
+	/** BreakDelay: every 5-tick break cooldown (creative, and survival after a break). */
+	@ModifyExpressionValue(method = {"startDestroyBlock", "continueDestroyBlock"}, at = @At(value = "CONSTANT", args = "intValue=5"))
+	private int coffeeclient$breakDelay(int original) {
+		return ModuleManager.on(BreakDelay.class) ? CoffeeClient.modules().get(BreakDelay.class).cooldown() : original;
+	}
+
+	/** BreakDelay's No insta break skips an instant break and waits the cooldown; SpeedMine scales the rest. */
+	@ModifyExpressionValue(method = "continueDestroyBlock", at = @At(value = "INVOKE",
+		target = "Lnet/minecraft/world/level/block/state/BlockState;getDestroyProgress(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)F"))
+	private float coffeeclient$destroyProgress(float original) {
+		BreakDelay breakDelay = ModuleManager.ifOn(BreakDelay.class);
+		if (breakDelay != null && breakDelay.noInstaBreak.get() && original >= 1) {
+			((MultiPlayerGameModeAccessor) this).coffeeclient$setDestroyDelay(breakDelay.cooldown());
+			return 0;
+		}
+		return SpeedMine.scale(original);
 	}
 
 	@Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true)

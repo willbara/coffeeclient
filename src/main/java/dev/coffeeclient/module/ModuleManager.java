@@ -73,7 +73,7 @@ public final class ModuleManager {
 			new HotbarLock(), new DurabilityAlert(), new ArmorStatus(), new InventoryPlus(), new QuickStack(), new Organizer(),
 			new PickupNotifier(), new XpTracker(), new ItemCounter(), new NoFall(), new AutoTool(),
 			new EffectTimers(), new Reach(), new NoEffect(), new AntiHunger(), new AutoRespawn(),
-			new AntiAFK(), new ChestSwap(), new MiddleClickExtra(), new PacketMine(), new AutoReplenish(), new FastUse(), new NoRotate(), new InstantRebreak(),
+			new AntiAFK(), new ChestSwap(), new MiddleClickExtra(), new PacketMine(), new SpeedMine(), new AutoReplenish(), new FastUse(), new NoRotate(), new InstantRebreak(),
 			new AirPlace(), new BreakDelay(), new NoSlowBreak(), new Multitask(), new LiquidInteract(), new NoMiningTrace(),
 			new PotionSaver(), new EXPThrower(), new GhostHand(), new FakePlayer(), new AutoMend(), new AutoPot(), new ClutchFall(),
 			// Exploit (diagnostics only in this baseline)

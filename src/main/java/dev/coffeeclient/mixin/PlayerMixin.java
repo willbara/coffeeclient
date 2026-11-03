@@ -8,6 +8,7 @@ import dev.coffeeclient.module.modules.movement.NoSlow;
 import dev.coffeeclient.core.Events;
 import dev.coffeeclient.module.modules.movement.NoSlowBreak;
 import dev.coffeeclient.module.modules.player.Reach;
+import dev.coffeeclient.module.modules.player.SpeedMine;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
@@ -57,6 +58,19 @@ abstract class PlayerMixin {
 		target = "Lnet/minecraft/world/entity/player/Player;onGround()Z"))
 	private boolean coffeeclient$noAirSlow(boolean original) {
 		return original || (Object) this == Minecraft.getInstance().player && NoSlowBreak.inAir();
+	}
+
+	/** SpeedMine's Haste mode: mine as if you had Haste. */
+	@ModifyExpressionValue(method = "getDestroySpeed", at = @At(value = "INVOKE",
+		target = "Lnet/minecraft/world/effect/MobEffectUtil;hasDigSpeed(Lnet/minecraft/world/entity/LivingEntity;)Z"))
+	private boolean coffeeclient$haste(boolean original) {
+		return original || (Object) this == Minecraft.getInstance().player && SpeedMine.haste();
+	}
+
+	@ModifyExpressionValue(method = "getDestroySpeed", at = @At(value = "INVOKE",
+		target = "Lnet/minecraft/world/effect/MobEffectUtil;getDigSpeedAmplification(Lnet/minecraft/world/entity/LivingEntity;)I"))
+	private int coffeeclient$hasteAmp(int original) {
+		return (Object) this == Minecraft.getInstance().player ? SpeedMine.hasteAmp(original) : original;
 	}
 
 	@ModifyReturnValue(method = "getSpeed", at = @At("RETURN"))

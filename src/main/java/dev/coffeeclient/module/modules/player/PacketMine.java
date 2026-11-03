@@ -41,7 +41,7 @@ public final class PacketMine extends Module {
 	private final MiningManager mining = new MiningManager();
 
 	public PacketMine() {
-		super("PacketMine", List.of("SpeedMine", "Packet Mine"), Category.PLAYER, "Breaks the block you click by packets, finishing as early as the server allows.");
+		super("PacketMine", List.of("Packet Mine"), Category.PLAYER, "Breaks the block you click by packets, finishing as early as the server allows.");
 		color.visibleWhen(render::get);
 	}
 

@@ -84,6 +84,9 @@ public final class StashFinder extends Module {
 		"minecraft:dropper", "minecraft:ender_chest", "minecraft:furnace", "minecraft:hopper",
 		"minecraft:shulker_box", "minecraft:smoker");
 
+	public final BooleanSetting disableOnDisconnect = group(new BooleanSetting("Disable on disconnect", "Turn off when you leave the server", false), "General");
+	public final ActionSetting clear = group(new ActionSetting("Clear history", "Forget every remembered stash and find for this server", this::clearAll), "General");
+
 	public final IdListSetting types = group(new IdListSetting("Storage types", "Block entities counted as storage",
 		DEFAULT_TYPES, () -> BuiltInRegistries.BLOCK_ENTITY_TYPE.keySet().stream()
 		.map(Identifier::toString).sorted().toList(), false).labels(StashFinder::typeName), "Scanning");
@@ -108,8 +111,6 @@ public final class StashFinder extends Module {
 	public final NumberSetting hideCloser = group(new NumberSetting("Hide closer than", "Hide stash tracers closer than this (the column still shows)", 16, 0, 256, 4), "Render");
 	public final BooleanSetting chunkColumns = group(new BooleanSetting("Chunk columns", "Draw a column at each found chunk", false), "Render");
 	public final BooleanSetting hudSummary = group(new BooleanSetting("HUD summary", "Show stash totals on the HUD", true), "Render");
-
-	public final ActionSetting clear = group(new ActionSetting("Clear history", "Forget every remembered stash and find for this server", this::clearAll), "Actions");
 
 	// Base hunting: shared
 
@@ -243,6 +244,9 @@ public final class StashFinder extends Module {
 		listen(Events.ChunkUnload.class, e -> hub.chunkUnloaded(e.chunk().getPos()));
 		listen(Events.BlockUpdate.class, e -> hub.blockChanged(e.pos()));
 		listen(Events.BlockBroken.class, e -> hub.blockBroken(e.pos()));
+		listen(Events.GameLeft.class, e -> {
+			if (disableOnDisconnect.get()) setEnabled(false);
+		});
 	}
 
 	/** The base-hunting detectors (for tests and the HUD). */
