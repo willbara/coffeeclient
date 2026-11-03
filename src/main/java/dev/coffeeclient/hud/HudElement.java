@@ -6,7 +6,7 @@ import dev.coffeeclient.gui.Ui;
  * A draggable HUD element.
  *
  * <p>Its position is an <em>anchor</em> (left/centre/right × top/middle/bottom, picked from the third of
- * the screen it sits in) plus an offset from that anchor in whole {@link #GRID} steps. Offsets are in GUI
+ * the screen it sits in) plus an offset from that anchor in whole {@link #GRID} steps, or flush against a neighbour. Offsets are in GUI
  * pixels, so an element keeps the same spacing from its edge at every GUI scale and window size, and
  * elements line up with each other on the grid. The final position is always clamped on screen.
  */
@@ -60,6 +60,11 @@ public abstract class HudElement {
 
 	public abstract int height();
 
+	/** Gap kept from the screen edge the element is anchored to; 0 lets a filled panel sit flush against it. */
+	protected int margin() {
+		return MARGIN;
+	}
+
 	/** Default top-left position in GUI pixels for a fresh layout. */
 	protected abstract int[] defaultPosition(int screenW, int screenH);
 
@@ -71,8 +76,8 @@ public abstract class HudElement {
 		int x;
 		if (!placed) x = auto != null && autoStacks() ? auto[0] : defaultPosition(screenW, 0)[0];
 		else x = switch (anchorX) {
-			case -1 -> MARGIN + offsetX;
-			case 1 -> screenW - MARGIN - w - offsetX;
+			case -1 -> margin() + offsetX;
+			case 1 -> screenW - margin() - w - offsetX;
 			default -> screenW / 2 - w / 2 + offsetX;
 		};
 		return clamp(x, screenW - w);
@@ -92,12 +97,12 @@ public abstract class HudElement {
 		int baseX = placed ? 0 : defaultPosition(screenW, 0)[0];
 		int ax = placed ? anchorX : third(baseX + baseWidth / 2, screenW);
 		int offset = placed ? offsetX : switch (ax) {
-			case -1 -> baseX - MARGIN;
-			case 1 -> screenW - MARGIN - baseWidth - baseX;
+			case -1 -> baseX - margin();
+			case 1 -> screenW - margin() - baseWidth - baseX;
 			default -> baseX + baseWidth / 2 - screenW / 2;
 		};
 		int scaledOffset = Math.round(offset * scale);
-		int scaledMargin = Math.round(MARGIN * scale);
+		int scaledMargin = Math.round(margin() * scale);
 		int value = switch (ax) {
 			case -1 -> scaledMargin + scaledOffset;
 			case 1 -> screenW - scaledMargin - scaledWidth - scaledOffset;
@@ -111,8 +116,8 @@ public abstract class HudElement {
 		int y;
 		if (!placed) y = auto != null && autoStacks() ? auto[1] : defaultPosition(screenW, screenH)[1];
 		else y = switch (anchorY) {
-			case -1 -> MARGIN + offsetY;
-			case 1 -> screenH - MARGIN - h - offsetY;
+			case -1 -> margin() + offsetY;
+			case 1 -> screenH - margin() - h - offsetY;
 			default -> screenH / 2 - h / 2 + offsetY;
 		};
 		return clamp(y, screenH - h);
@@ -124,12 +129,12 @@ public abstract class HudElement {
 		int baseY = placed ? 0 : defaultPosition(screenW, screenH)[1];
 		int ay = placed ? anchorY : third(baseY + baseHeight / 2, screenH);
 		int offset = placed ? offsetY : switch (ay) {
-			case -1 -> baseY - MARGIN;
-			case 1 -> screenH - MARGIN - baseHeight - baseY;
+			case -1 -> baseY - margin();
+			case 1 -> screenH - margin() - baseHeight - baseY;
 			default -> baseY + baseHeight / 2 - screenH / 2;
 		};
 		int scaledOffset = Math.round(offset * scale);
-		int scaledMargin = Math.round(MARGIN * scale);
+		int scaledMargin = Math.round(margin() * scale);
 		int value = switch (ay) {
 			case -1 -> scaledMargin + scaledOffset;
 			case 1 -> screenH - scaledMargin - scaledHeight - scaledOffset;
@@ -163,15 +168,17 @@ public abstract class HudElement {
 		anchorX = third(x + w / 2, screenW);
 		anchorY = third(y + h / 2, screenH);
 		double safeScale = Math.max(0.01, scale);
+		// exact inverse of x()/y() (same rounded margin, same integer halves), so a flush neighbour snap lands flush
+		int gap = Math.round(margin() * scale);
 		offsetX = snapOffset((int) Math.round(switch (anchorX) {
-			case -1 -> x - MARGIN * safeScale;
-			case 1 -> screenW - MARGIN * safeScale - w - x;
-			default -> x + w / 2.0 - screenW / 2.0;
+			case -1 -> x - gap;
+			case 1 -> screenW - gap - w - x;
+			default -> x + w / 2 - screenW / 2;
 		} / safeScale), anchorX != 0, snapX);
 		offsetY = snapOffset((int) Math.round(switch (anchorY) {
-			case -1 -> y - MARGIN * safeScale;
-			case 1 -> screenH - MARGIN * safeScale - h - y;
-			default -> y + h / 2.0 - screenH / 2.0;
+			case -1 -> y - gap;
+			case 1 -> screenH - gap - h - y;
+			default -> y + h / 2 - screenH / 2;
 		} / safeScale), anchorY != 0, snapY);
 		placed = true;
 	}
@@ -231,8 +238,9 @@ public abstract class HudElement {
 	public void restorePosition(int ax, int ay, int ox, int oy) {
 		anchorX = Math.max(-1, Math.min(1, ax));
 		anchorY = Math.max(-1, Math.min(1, ay));
-		offsetX = Math.round(ox / (float) GRID) * GRID;
-		offsetY = Math.round(oy / (float) GRID) * GRID;
+		// kept exact: an offset off the grid is a flush snap to a neighbour
+		offsetX = ox;
+		offsetY = oy;
 		placed = true;
 	}
 

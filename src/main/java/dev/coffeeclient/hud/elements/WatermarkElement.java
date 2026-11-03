@@ -50,9 +50,15 @@ public final class WatermarkElement extends HudElement {
 		return hud().watermarkStyle.get() == HudModule.WatermarkStyle.CUP ? 22 : 13;
 	}
 
+	/** The chip and gradient panels sit flush against the screen edge; the cup has no panel to show a gap. */
+	@Override
+	protected int margin() {
+		return hud().watermarkStyle.get() == HudModule.WatermarkStyle.CUP ? MARGIN : 0;
+	}
+
 	@Override
 	protected int[] defaultPosition(int screenW, int screenH) {
-		return new int[] {screenW / 2 - width() / 2, MARGIN};
+		return new int[] {screenW / 2 - width() / 2, margin()};
 	}
 
 	@Override

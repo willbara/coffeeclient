@@ -26,9 +26,16 @@ public class HudEditorScreen extends CoffeeScreen {
 	private record PositionSnap(int x, int y, boolean snappedX, boolean snappedY) {
 	}
 
+	private static final int BAR_W = 236, BAR_H = 34;
+	/** Bar offset from the screen centre; kept for the session like the other movable windows. */
+	private static int barOffX, barOffY;
+
 	private @Nullable HudElement dragging;
+	private boolean draggingBar;
 	private double grabX, grabY;
+	/** Bar top-left in screen pixels; the bar itself is laid out in its own units, drawn at {@link #barScale}. */
 	private int barX, barY, barW;
+	private float barScale = 1f;
 
 	public HudEditorScreen(@Nullable Screen parent) {
 		super("HUD Editor", parent);
@@ -47,14 +54,44 @@ public class HudEditorScreen extends CoffeeScreen {
 
 	@Override
 	protected void build() {
-		barW = Math.min(width - 20, 320);
-		barX = (width - barW) / 2;
-		barY = height / 2 - 20;
+		// the screen stays 1:1 for the elements; only the bar follows the interface scale, like other windows
+		barScale = super.uiScale();
+		barW = Math.min((int) ((width - 20) / barScale), BAR_W);
 		// buttons share the title row, so the help line below gets the full width
 		root.add(new Button("Settings", () -> minecraft.gui.setScreen(
-			new ModuleScreen(this, CoffeeClient.modules().get(HudModule.class))))).setBounds(barX + barW - 184, barY + 5, 52, 14);
-		root.add(new Button("Reset layout", () -> CoffeeClient.hud().resetLayout())).setBounds(barX + barW - 128, barY + 5, 72, 14);
-		root.add(new Button("Done", this::onClose)).setBounds(barX + barW - 52, barY + 5, 46, 14);
+			new ModuleScreen(this, CoffeeClient.modules().get(HudModule.class))))).setBounds(barW - 166, 4, 50, 14);
+		root.add(new Button("Reset layout", () -> CoffeeClient.hud().resetLayout())).setBounds(barW - 112, 4, 68, 14);
+		root.add(new Button("Done", this::onClose)).setBounds(barW - 40, 4, 34, 14);
+		placeBar(barOffX, barOffY);
+	}
+
+	private int barPixelW() {
+		return Math.round(barW * barScale);
+	}
+
+	private int barPixelH() {
+		return Math.round(BAR_H * barScale);
+	}
+
+	/** Position the bar at an offset from the screen centre, kept fully on screen. */
+	private void placeBar(int offX, int offY) {
+		int w = barPixelW(), h = barPixelH();
+		barX = Math.max(0, Math.min(width - w, (width - w) / 2 + offX));
+		barY = Math.max(0, Math.min(height - h, (height - h) / 2 + offY));
+		barOffX = barX - (width - w) / 2;
+		barOffY = barY - (height - h) / 2;
+	}
+
+	private boolean overBar(double mx, double my) {
+		return mx >= barX && mx < barX + barPixelW() && my >= barY && my < barY + barPixelH();
+	}
+
+	private double barLocalX(double mx) {
+		return (mx - barX) / barScale;
+	}
+
+	private double barLocalY(double my) {
+		return (my - barY) / barScale;
 	}
 
 	@Override
@@ -81,7 +118,7 @@ public class HudEditorScreen extends CoffeeScreen {
 			if (dragging.centredY()) Draw.rect(ui.g, 0, height / 2, width, 1, t.accent(0x90));
 		}
 		CoffeeClient.hud().layoutAuto(width, height, true);
-		HudElement hovered = elementAt(ui.mouseX, ui.mouseY);
+		HudElement hovered = overBar(ui.mouseX, ui.mouseY) ? null : elementAt(ui.mouseX, ui.mouseY);
 		for (HudElement e : CoffeeClient.hud().elements()) {
 			if (!e.showInEditor()) continue;
 			int x = e.x(width, hudScale), y = e.y(width, height, hudScale);
@@ -92,25 +129,36 @@ public class HudEditorScreen extends CoffeeScreen {
 				Draw.textCentered(ui.g, "hidden", x + w / 2, y + h / 2 - 4, t.dimText);
 			}
 			boolean active = e == dragging || e == hovered;
-			Draw.border(ui.g, x - 1, y - 1, w + 2, h + 2, active ? t.accent : t.accent(0x60));
+			// drawn inside the element's own bounds, so flush neighbours sit side by side instead of overlapping
+			if (active) Draw.rect(ui.g, x, y, w, h, t.accent(0x18));
+			Draw.border(ui.g, x, y, w, h, active ? t.accent : t.accent(0x60));
 			if (e == dragging) {
 				String label = e.displayName() + (e.isEnabled() ? "" : " (hidden)");
-				int ly = y > 12 ? y - 11 : y + h + 2;
-				Draw.rect(ui.g, x - 1, ly, Draw.width(label) + 6, 10, t.panel);
+				int ly = y > 12 ? y - 11 : y + h + 1;
+				Draw.rect(ui.g, x, ly, Draw.width(label) + 6, 10, t.panel);
 				Draw.text(ui.g, label, x + 2, ly + 1, t.text);
 			}
 		}
-		Draw.panel(ui.g, t, barX, barY, barW, 40);
-		if (t.glass()) {
-			dev.coffeeclient.gui.fx.Shapes.glowDot(ui.g, barX + 9.5f, barY + 12f, 2, 3, t.accent(0x70));
-			dev.coffeeclient.gui.fx.Shapes.disc(ui.g, barX + 9.5f, barY + 12f, 2, t.accent);
-			Draw.text(ui.g, "HUD Editor", barX + 15, barY + 8, t.strongText());
-		} else {
-			Draw.accentBar(ui.g, t, barX + 6, barY + 7, 9);
-			Draw.text(ui.g, "HUD Editor", barX + 11, barY + 8, t.accent);
+		ui.g.pose().pushMatrix();
+		try {
+			ui.g.pose().translate(barX, barY);
+			ui.g.pose().scale(barScale, barScale);
+			Ui bar = new Ui(ui.g, (int) Math.floor(barLocalX(ui.mouseX)), (int) Math.floor(barLocalY(ui.mouseY)));
+			bar.hoverAllowed = ui.hoverAllowed;
+			Draw.panel(bar.g, t, 0, 0, barW, BAR_H);
+			if (t.glass()) {
+				dev.coffeeclient.gui.fx.Shapes.glowDot(bar.g, 9.5f, 11f, 2, 3, t.accent(0x70));
+				dev.coffeeclient.gui.fx.Shapes.disc(bar.g, 9.5f, 11f, 2, t.accent);
+				Draw.text(bar.g, "HUD Editor", 15, 7, t.strongText());
+			} else {
+				Draw.accentBar(bar.g, t, 6, 6, 9);
+				Draw.text(bar.g, "HUD Editor", 11, 7, t.accent);
+			}
+			Draw.textCentered(bar.g, Draw.trim("Drag: move · Right-click: show/hide · R: reset", barW - 12), barW / 2, 22, t.dimText);
+			super.renderContent(bar);
+		} finally {
+			ui.g.pose().popMatrix();
 		}
-		Draw.textCentered(ui.g, Draw.trim("Drag to move · Right-click: show/hide · R: reset", barW - 12), barX + barW / 2, barY + 26, t.dimText);
-		super.renderContent(ui);
 		if (hovered != null && dragging == null) ui.tooltip(hovered.displayName(), "Drag to move", "Right-click to " + (hovered.isEnabled() ? "hide" : "show"));
 	}
 
@@ -156,7 +204,14 @@ public class HudEditorScreen extends CoffeeScreen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-		if (root.mouseClicked(event.x(), event.y(), event.button())) return true;
+		if (root.mouseClicked(barLocalX(event.x()), barLocalY(event.y()), event.button())) return true;
+		if (overBar(event.x(), event.y())) {
+			if (event.button() != Widget.LEFT) return true;
+			draggingBar = true;
+			grabX = event.x() - barX;
+			grabY = event.y() - barY;
+			return true;
+		}
 		HudElement e = elementAt(event.x(), event.y());
 		if (e == null) return false;
 		if (event.button() == Widget.RIGHT) {
@@ -172,6 +227,10 @@ public class HudEditorScreen extends CoffeeScreen {
 
 	@Override
 	public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+		if (draggingBar) {
+			placeBar((int) Math.round(event.x() - grabX) - (width - barPixelW()) / 2, (int) Math.round(event.y() - grabY) - (height - barPixelH()) / 2);
+			return true;
+		}
 		if (dragging == null) return super.mouseDragged(event, dx, dy);
 		float scale = CoffeeClient.options().interfaceScale.floatValue();
 		int x = (int) Math.round(event.x() - grabX), y = (int) Math.round(event.y() - grabY);
@@ -182,6 +241,10 @@ public class HudEditorScreen extends CoffeeScreen {
 
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
+		if (draggingBar) {
+			draggingBar = false;
+			return true;
+		}
 		if (dragging != null) {
 			dragging = null;
 			ConfigManager.markDirty();

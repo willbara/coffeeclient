@@ -56,17 +56,22 @@ public final class ModuleListElement extends HudElement {
 		long now = System.nanoTime();
 		if (rows != null && now - rowsAt < CACHE_NS) return rows;
 		rowsAt = now;
-		boolean showInfo = hud().moduleInfo.get();
+		HudModule hud = hud();
+		boolean showInfo = hud.moduleInfo.get();
 		List<Row> out = new ArrayList<>();
 		for (Module m : CoffeeClient.modules().all()) {
-			if (!m.listable() || !m.shownInList().get()) continue;
+			if (!m.listable() || !m.shownInList().get() || !hud.listsCategory(m.category())) continue;
 			if (!m.isEnabled() && slide.getOrDefault(m, 0f) <= 0.02f) continue;
 			String info = showInfo ? m.safeInfoString() : null;
-			int nameWidth = Draw.width(m.name());
+			if (info != null && hud.infoBrackets.get()) info = "[" + info + "]";
+			String name = hud.listLowercase.get() ? m.name().toLowerCase(java.util.Locale.ROOT) : m.name();
+			int nameWidth = Draw.width(name);
 			int width = info == null ? nameWidth : nameWidth + INFO_GAP + Draw.width(info);
-			out.add(new Row(m, m.name(), info, nameWidth, width));
+			out.add(new Row(m, name, info, nameWidth, width));
 		}
-		out.sort(Comparator.comparingInt(Row::width).reversed());
+		out.sort(hud.listSort.get() == HudModule.ListSort.ALPHABETICAL
+			? Comparator.comparing(Row::name, String.CASE_INSENSITIVE_ORDER)
+			: Comparator.comparingInt(Row::width).reversed());
 		rows = out;
 		return out;
 	}
@@ -111,24 +116,34 @@ public final class ModuleListElement extends HudElement {
 		int w = width();
 		int ly = y;
 		HudModule.ListStyle style = hud().listStyle.get();
-		boolean cascade = hud().listCascade.get();
+		HudModule.ListColors colors = hud().listColors.get();
+		HudModule.ListAnimation anim = hud().listAnimation.get();
+		boolean rainbow = hud().listRainbow.get();
+		double hue = System.nanoTime() / 1e9 * hud().rainbowSpeed.get();
 		for (int i = 0; i < list.size(); i++) {
 			Row row = list.get(i);
 			float target = row.module.isEnabled() ? 1f : 0f;
 			float s = slide.getOrDefault(row.module, 0f);
 			s += (target - s) * ui.animStep(10f);
-			if (Math.abs(target - s) < 0.002f) s = target;
+			if (anim == HudModule.ListAnimation.NONE || Math.abs(target - s) < 0.002f) s = target;
 			slide.put(row.module, s);
 			if (i >= shown) continue;
 			// rows slide in with a slight overshoot and glide up as others leave
 			float e = t.motion() ? Ease.OUT_BACK.apply(s) : s;
 			int tw = row.width + 6;
-			int offset = Math.round((1 - e) * (tw + 4));
+			int offset = anim == HudModule.ListAnimation.SLIDE ? Math.round((1 - e) * (tw + 4)) : 0;
 			int lx = right ? x + w - tw + offset : x - offset;
 			float alpha = Math.max(0.05f, s);
 			float pos = i * 0.08f;
-			int accent = t.accentAt(pos);
-			int nameColor = cascade ? accent : Colors.lerp(t.text, t.accent, i / (float) Math.max(1, list.size()) * 0.6f);
+			double h = hue + i * hud().rainbowSpread.get();
+			int accent = rainbow
+				? Colors.fromHsv((float) (h - Math.floor(h)) * 360, hud().rainbowSaturation.floatValue(), hud().rainbowBrightness.floatValue(), 0xFF)
+				: t.accentAt(pos);
+			int nameColor = switch (colors) {
+				case CASCADE -> accent;
+				case FADE -> Colors.lerp(t.text, rainbow ? accent : t.accent, i / (float) Math.max(1, list.size()) * 0.6f);
+				case STATIC -> hud().listColor.argb();
+			};
 			int textColor = Colors.fade(nameColor, alpha);
 			int bgColor = Colors.fade(hud().backgroundColor.argb(), s * 0.85f);
 			switch (style) {
@@ -140,11 +155,11 @@ public final class ModuleListElement extends HudElement {
 					if (bg) Draw.rect(ui.g, lx, ly, tw, LINE_H, bgColor);
 					Draw.rect(ui.g, lx, ly, 1, LINE_H, Colors.fade(accent, alpha));
 					Draw.rect(ui.g, lx + tw - 1, ly, 1, LINE_H, Colors.fade(accent, alpha));
-					// close off the box where this row is wider than the next
-					int next = i + 1 < list.size() ? list.get(i + 1).width + 6 : 0;
-					int edge = tw - next;
-					if (edge > 0) Draw.rect(ui.g, right ? lx : lx + next, ly + LINE_H - 1, edge, 1, Colors.fade(accent, alpha));
-					if (i == 0) Draw.rect(ui.g, lx, ly, tw, 1, Colors.fade(accent, alpha));
+					// close off the box where this row is wider than its neighbours (any sort order)
+					int next = i + 1 < shown ? list.get(i + 1).width + 6 : 0;
+					int prev = i > 0 ? list.get(i - 1).width + 6 : 0;
+					if (tw > next) Draw.rect(ui.g, right ? lx : lx + next, ly + LINE_H - 1, tw - next, 1, Colors.fade(accent, alpha));
+					if (tw > prev) Draw.rect(ui.g, right ? lx : lx + prev, ly, tw - prev, 1, Colors.fade(accent, alpha));
 				}
 				case MINIMAL -> {
 				}
