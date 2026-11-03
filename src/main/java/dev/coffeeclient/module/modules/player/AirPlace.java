@@ -8,7 +8,9 @@ import dev.coffeeclient.setting.BooleanSetting;
 import dev.coffeeclient.setting.ColorSetting;
 import dev.coffeeclient.setting.NumberSetting;
 import dev.coffeeclient.setting.Setting;
+import dev.coffeeclient.util.BlockActions;
 import dev.coffeeclient.util.Colors;
+import dev.coffeeclient.util.Inv;
 import dev.coffeeclient.util.WorldProjector;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -26,7 +28,7 @@ public final class AirPlace extends Module {
 	public final BooleanSetting render = group(new BooleanSetting("Render", "Render a marker where the block will be placed", true), "General");
 	public final BooleanSetting customRange = group(new BooleanSetting("Custom range", "Use a custom placement range", false), "Range");
 	public final NumberSetting range = group(new NumberSetting("Range", "Custom placement range", 5, 0, 6, 0.5), "Range");
-	public final ColorSetting color = group(new ColorSetting("Color", "Marker colour", 0xFFCC0000), "Render");
+	public final ColorSetting color = group(new ColorSetting("Color", "Marker colour", 0xFFFFFFFF), "Render");
 
 	private HitResult hitResult;
 
@@ -54,14 +56,19 @@ public final class AirPlace extends Module {
 
 		double r = customRange.get() ? range.get() : mc.player.blockInteractionRange();
 		HitResult hr = mc.getCameraEntity().pick(r, 0, false);
-		if (hr instanceof BlockHitResult bhr) {
+		// A missed ray is still a BlockHitResult (type MISS), so test the type before taking the block branch.
+		if (hr instanceof BlockHitResult bhr && bhr.getType() == HitResult.Type.BLOCK) {
 			hitResult = bhr;
 		} else if (hr.getType() == HitResult.Type.MISS) {
 			Vec3 end = hr.getLocation();
 			BlockPos bp = BlockPos.containing(end);
-			hitResult = new BlockHitResult(end, mc.player.getMotionDirection().getOpposite(), bp, false);
-			// Expose to vanilla placement logic.
-			mc.hitResult = hitResult;
+			BlockHitResult air = new BlockHitResult(end, mc.player.getMotionDirection().getOpposite(), bp, false);
+			hitResult = air;
+			// Vanilla resets mc.hitResult every frame and handles the click before our tick, so place here.
+			if (mc.options.keyUse.isDown()) {
+				Inv.FindItemResult item = Inv.findInHotbar(stack -> stack.getItem() instanceof BlockItem);
+				if (item.found()) BlockActions.placeAt(air, item, false, 0, true, true);
+			}
 		}
 	}
 
@@ -86,6 +93,6 @@ public final class AirPlace extends Module {
 		float[] pt = projector.project(p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5);
 		if (!projector.onScreen(pt, 4)) return;
 		int c = Colors.withAlpha(color.argb(), 0x80);
-		Draw.cross(ui.g, Math.round(pt[0]) - 4, Math.round(pt[1]) - 4, 8, c);
+		Draw.plus(ui.g, Math.round(pt[0]) - 4, Math.round(pt[1]) - 4, 9, c);
 	}
 }

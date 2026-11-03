@@ -12,6 +12,7 @@ import dev.coffeeclient.module.modules.exploit.PacketRate;
 import dev.coffeeclient.module.modules.combat.DamageNumbers;
 import dev.coffeeclient.module.modules.exploit.DesyncDetector;
 import dev.coffeeclient.module.modules.movement.Flight;
+import dev.coffeeclient.module.modules.player.AirPlace;
 import dev.coffeeclient.module.modules.player.AntiAFK;
 import dev.coffeeclient.module.modules.player.AutoRespawn;
 import dev.coffeeclient.module.modules.player.AutoTool;
@@ -134,6 +135,10 @@ public final class CoffeeGameTest implements FabricClientGameTest {
 			}
 			if ("tracers".equals(System.getenv("COFFEE_TEST_ONLY"))) {
 				tracerDiagnosis(context, server);
+				return;
+			}
+			if ("airplace".equals(System.getenv("COFFEE_TEST_ONLY"))) {
+				airPlaceHeldUse(context, server);
 				return;
 			}
 			listenersFollowEnabledState(context);
@@ -910,6 +915,30 @@ public final class CoffeeGameTest implements FabricClientGameTest {
 		int held = context.computeOnClient(mc -> mc.player.getInventory().getSelectedSlot());
 		check(queued && placed && held == 0, "BlockActions.place (queued " + queued + ", placed " + placed + ", swapped back " + (held == 0) + ")");
 		server.runCommand("setblock 2 -60 0 minecraft:air");
+	}
+
+	/** AirPlace puts the held block into the air the crosshair points at while use is held. */
+	private static void airPlaceHeldUse(ClientGameTestContext context, TestServerContext server) {
+		server.runCommand("item replace entity @a hotbar.3 with minecraft:oak_planks 16");
+		server.runCommand("tp @a 0.5 -55 0.5 0 0");
+		context.waitTicks(5);
+		context.runOnClient(mc -> {
+			mc.player.getInventory().setSelectedSlot(3);
+			module(AirPlace.class).setEnabled(true);
+			mc.options.keyUse.setDown(true);
+		});
+		context.waitTicks(5);
+		context.runOnClient(mc -> {
+			mc.options.keyUse.setDown(false);
+			module(AirPlace.class).setEnabled(false);
+		});
+		context.waitTicks(5);
+		BlockPos spot = new BlockPos(0, -54, 5);
+		boolean placed = server.computeOnServer(s -> s.overworld().getBlockState(spot).is(Blocks.OAK_PLANKS));
+		check(placed, "AirPlace places in midair at " + spot);
+		server.runCommand("setblock 0 -54 5 minecraft:air");
+		server.runCommand("tp @a 0 -60 0 0 0");
+		context.waitTicks(10);
 	}
 
 	/**
