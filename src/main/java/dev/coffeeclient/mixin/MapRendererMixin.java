@@ -1,6 +1,7 @@
 package dev.coffeeclient.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import dev.coffeeclient.module.modules.client.StreamerMode;
 import dev.coffeeclient.module.modules.render.NoEffect;
 import net.minecraft.client.renderer.MapRenderer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -10,11 +11,18 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** NoEffect: maps drawn without their markers (the render state is rebuilt every frame, so clearing it is safe). */
+/**
+ * NoEffect: maps drawn without their markers (the render state is rebuilt every frame, so clearing it is safe).
+ * StreamerMode: no map picture at all, leaving the blank parchment in hand and an empty item frame.
+ */
 @Mixin(MapRenderer.class)
 abstract class MapRendererMixin {
-	@Inject(method = "render", at = @At("HEAD"))
+	@Inject(method = "render", at = @At("HEAD"), cancellable = true)
 	private void coffeeclient$noMapMarkers(MapRenderState state, PoseStack poseStack, SubmitNodeCollector collector, boolean showOnlyFrame, int light, CallbackInfo ci) {
+		if (StreamerMode.hideMaps()) {
+			ci.cancel();
+			return;
+		}
 		if (NoEffect.hides(m -> m.mapMarkers)) state.decorations.clear();
 	}
 }

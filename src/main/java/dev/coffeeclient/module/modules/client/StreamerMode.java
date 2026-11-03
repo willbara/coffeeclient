@@ -34,6 +34,9 @@ public final class StreamerMode extends Module {
 	public final BooleanSetting hideServer = setting(new BooleanSetting("Hide server", "Blank out the server address", true));
 	public final BooleanSetting hideSeed = setting(new BooleanSetting("Hide seed", "Blank out the world seed on the dashboard", true));
 
+	public final BooleanSetting hideMaps = group(new BooleanSetting("Hide maps", "Blank map pictures in your hand, in item frames and in tooltips", true), "Censor");
+	public final BooleanSetting hideSigns = group(new BooleanSetting("Hide sign text", "Signs show their board without the writing", true), "Censor");
+
 	public final BooleanSetting maskLogin = group(new BooleanSetting("Mask passwords", "Show stars for what you type after a login command", true), "Passwords");
 	public final StringSetting maskPattern = group(new StringSetting("Command pattern", "Regex for the part kept visible; everything after it is masked",
 		"^/(login|log|l|register|reg|changepassword|changepass)\\s+", 200), "Passwords");
@@ -165,6 +168,14 @@ public final class StreamerMode extends Module {
 
 	public static boolean hideSeed() {
 		return ModuleManager.on(StreamerMode.class) && self().hideSeed.get();
+	}
+
+	public static boolean hideMaps() {
+		return ModuleManager.on(StreamerMode.class) && self().hideMaps.get();
+	}
+
+	public static boolean hideSigns() {
+		return ModuleManager.on(StreamerMode.class) && self().hideSigns.get();
 	}
 
 	/** Replacement text for hidden values. */

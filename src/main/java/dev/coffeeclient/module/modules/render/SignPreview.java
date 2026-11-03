@@ -4,6 +4,7 @@ import dev.coffeeclient.hud.HudElement;
 import dev.coffeeclient.hud.ModuleHudElement;
 import dev.coffeeclient.module.Category;
 import dev.coffeeclient.module.Module;
+import dev.coffeeclient.module.modules.client.StreamerMode;
 import dev.coffeeclient.setting.ActionSetting;
 import dev.coffeeclient.setting.BooleanSetting;
 import dev.coffeeclient.setting.NumberSetting;
@@ -53,7 +54,11 @@ public final class SignPreview extends Module {
 	private void addSide(List<String> out, SignText text, String prefix) {
 		List<String> side = new ArrayList<>();
 		Component[] messages = text.getMessages(false);
-		for (int i = 0; i < 4; i++) side.add(i < messages.length ? messages[i].getString() : "");
+		boolean hide = StreamerMode.hideSigns();
+		for (int i = 0; i < 4; i++) {
+			String line = i < messages.length ? messages[i].getString() : "";
+			side.add(hide && !line.isBlank() ? StreamerMode.HIDDEN : line);
+		}
 		if (hideEmpty.get() && side.stream().allMatch(String::isBlank)) return;
 		for (int i = 0; i < side.size(); i++) out.add((i == 0 ? prefix : "") + side.get(i));
 	}

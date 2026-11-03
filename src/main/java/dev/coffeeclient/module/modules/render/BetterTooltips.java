@@ -8,6 +8,7 @@ import dev.coffeeclient.gui.tooltip.TextTooltip;
 import dev.coffeeclient.module.Category;
 import dev.coffeeclient.module.Module;
 import dev.coffeeclient.module.ModuleManager;
+import dev.coffeeclient.module.modules.client.StreamerMode;
 import dev.coffeeclient.setting.BooleanSetting;
 import dev.coffeeclient.setting.EnumSetting;
 import dev.coffeeclient.setting.KeybindSetting;
@@ -105,7 +106,7 @@ public final class BetterTooltips extends Module {
 
 	/** Image shown under an item's tooltip, or null for vanilla's. Called from {@code ItemStackMixin}. */
 	public TooltipComponent preview(ItemStack stack) {
-		if (mapPreview.get() && stack.has(DataComponents.MAP_ID)) return new MapTooltip(stack.get(DataComponents.MAP_ID));
+		if (mapPreview.get() && !StreamerMode.hideMaps() && stack.has(DataComponents.MAP_ID)) return new MapTooltip(stack.get(DataComponents.MAP_ID));
 		if (stack.is(Items.ENDER_CHEST)) {
 			if (!enderChestPreview.get()) return null;
 			List<ItemStack> items = enderChest;
