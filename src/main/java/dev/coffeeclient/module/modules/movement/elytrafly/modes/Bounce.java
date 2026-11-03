@@ -76,6 +76,8 @@ public class Bounce extends ElytraFlightMode {
 		LocalPlayer player = mc.player;
 		if (player == null || mc.getConnection() == null) return;
 		now++;
+		// Only the debug trace reads and clears the events, so drop them when it is off.
+		if (!elytraFly.bounceDebug.get()) events.setLength(0);
 		if (sinceSetback < 1000) sinceSetback++;
 		releaseLane();
 		checkReglide(player);
@@ -362,14 +364,6 @@ public class Bounce extends ElytraFlightMode {
 		mc.options.keyUp.setDown(KeyNames.isPhysicallyDown(mc.options.keyUp));
 	}
 
-	private void unpress() {
-		if (walking) {
-			walking = false;
-			mc.options.keyUp.setDown(false);
-		}
-		if (elytraFly.autoJump.get()) mc.options.keyJump.setDown(false);
-	}
-
 	@Override
 	public void onPositionCorrection() {
 		if (mc.player == null) return;
@@ -426,7 +420,7 @@ public class Bounce extends ElytraFlightMode {
 
 	@Override
 	public void onDeactivate() {
-		unpress();
+		releaseWalk();
 		releaseLane();
 		tooHigh = false;
 		if (prevFov != 0 && !elytraFly.sprint.get()) mc.options.fovEffectScale().set(prevFov);

@@ -66,8 +66,13 @@ public final class AirPlace extends Module {
 			hitResult = air;
 			// Vanilla resets mc.hitResult every frame and handles the click before our tick, so place here.
 			if (mc.options.keyUse.isDown()) {
-				Inv.FindItemResult item = Inv.findInHotbar(stack -> stack.getItem() instanceof BlockItem);
-				if (item.found()) BlockActions.placeAt(air, item, false, 0, true, true);
+				// Only the block already in hand, main hand first like vanilla; never swap to another slot.
+				Inv.FindItemResult item = mc.player.getMainHandItem().getItem() instanceof BlockItem
+					? new Inv.FindItemResult(mc.player.getInventory().getSelectedSlot(), mc.player.getMainHandItem().getCount())
+					: mc.player.getOffhandItem().getItem() instanceof BlockItem
+						? new Inv.FindItemResult(Inv.OFFHAND_INDEX, mc.player.getOffhandItem().getCount())
+						: null;
+				if (item != null) BlockActions.placeAt(air, item, false, 0, true, true);
 			}
 		}
 	}

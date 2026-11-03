@@ -578,11 +578,13 @@ public final class StashFinder extends Module {
 		if (!dirty || checkedServer == null) return;
 		dirty = false;
 		String server = checkedServer;
-		String json = StashHistory.toJson(stashes, finds);
+		// The rows are immutable records, so a shallow copy is a safe snapshot; the JSON is built off the main thread.
+		Map<String, StashHistory.Stash> stashSnapshot = new LinkedHashMap<>(stashes);
+		Map<String, StashHistory.Find> findSnapshot = new LinkedHashMap<>(finds);
 		Path path = file(server);
 		Async.io(() -> {
 			try {
-				JsonFiles.writeAtomic(path, json);
+				JsonFiles.writeAtomic(path, StashHistory.toJson(stashSnapshot, findSnapshot));
 			} catch (IOException e) {
 				CoffeeClient.LOG.warn("Could not save stash history to {}: {}", path, e.getMessage());
 			}
@@ -609,16 +611,11 @@ public final class StashFinder extends Module {
 		for (Map.Entry<Kind, List<AABB>> entry : result.entrySet()) {
 			List<AABB> boxes = entry.getValue();
 			if (boxes.isEmpty()) continue;
-			double x = 0, y = 0, z = 0;
-			for (AABB box : boxes) {
-				Vec3 center = box.getCenter();
-				x += center.x;
-				y += center.y;
-				z += center.z;
-			}
-			int bx = (int) Math.floor(x / boxes.size());
-			int by = (int) Math.floor(y / boxes.size());
-			int bz = (int) Math.floor(z / boxes.size());
+			// The first box, as Hub reports it: an average of scattered finds can land on nothing.
+			Vec3 center = boxes.getFirst().getCenter();
+			int bx = (int) Math.floor(center.x);
+			int by = (int) Math.floor(center.y);
+			int bz = (int) Math.floor(center.z);
 			String key = StashHistory.findKey(dimension, entry.getKey(), chunk.x(), chunk.z());
 			StashHistory.Find previous = finds.get(key);
 			long lastSeen = previous == null || now - previous.lastSeen() >= SEEN_REFRESH_MS ? now : previous.lastSeen();
