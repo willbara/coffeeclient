@@ -35,7 +35,6 @@ import dev.coffeeclient.setting.IdListSetting;
 import dev.coffeeclient.setting.NumberSetting;
 import dev.coffeeclient.setting.Setting;
 import dev.coffeeclient.util.Async;
-import dev.coffeeclient.util.Coords;
 import dev.coffeeclient.util.Colors;
 import dev.coffeeclient.util.Jingle;
 import dev.coffeeclient.util.Sounds;
@@ -62,7 +61,6 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
@@ -202,6 +200,7 @@ public final class StashFinder extends Module {
 	private final ModuleHudElement element = new ModuleHudElement(this, "stash_finder", "Stash finder",
 		this::hudLines, (w, h) -> new int[] {2, h / 2});
 	private StashHistoryPanel historyPanel;
+	private long enabledAt = System.currentTimeMillis();
 	private String checkedServer;
 	private String focused;
 	private long historyVersion;
@@ -269,6 +268,11 @@ public final class StashFinder extends Module {
 			if (!isEnabled()) return;
 			Minecraft.getInstance().execute(() -> scanChunk(chunk));
 		});
+	}
+
+	@Override
+	protected void onEnable() {
+		enabledAt = System.currentTimeMillis();
 	}
 
 	@Override
@@ -745,47 +749,13 @@ public final class StashFinder extends Module {
 			&& Math.hypot(stash.centerX(), stash.centerZ()) >= minDistance.get();
 	}
 
-	/** The nearest active stash in the current dimension, or null. */
-	private StashHistory.Stash nearest() {
-		Minecraft mc = mc();
-		if (mc.level == null || mc.player == null) return null;
-		String dimension = mc.level.dimension().identifier().toString();
-		StashHistory.Stash best = null;
-		double bestDistance = Double.MAX_VALUE;
-		for (StashHistory.Stash stash : stashes.values()) {
-			if (!stash.dimension().equals(dimension) || !active(stash)) continue;
-			double dx = stash.centerX() - mc.player.getX();
-			double dz = stash.centerZ() - mc.player.getZ();
-			double distance = dx * dx + dz * dz;
-			if (distance < bestDistance) {
-				bestDistance = distance;
-				best = stash;
-			}
-		}
-		return best;
-	}
-
 	private List<String[]> hudLines() {
 		Minecraft mc = mc();
-		List<String[]> lines = new ArrayList<>();
 		String dimension = mc.level == null ? "" : mc.level.dimension().identifier().toString();
 		long count = stashes.values().stream().filter(stash -> stash.dimension().equals(dimension) && active(stash)).count();
-		lines.add(ModuleHudElement.row("Stashes", count));
-		int findCount = 0;
-		for (Map<Kind, List<AABB>> perChunk : hub.hits().values()) for (List<AABB> list : perChunk.values()) findCount += list.size();
-		if (findCount > 0) lines.add(ModuleHudElement.row("Base finds", findCount));
-		StashHistory.Stash nearest = nearest();
-		if (nearest != null) {
-			Minecraft client = mc();
-			double distance = client.player == null ? 0 : Math.hypot(nearest.centerX() - client.player.getX(), nearest.centerZ() - client.player.getZ());
-			lines.add(ModuleHudElement.row("Nearest", Coords.format(nearest.centerX()) + ", " + Coords.format(nearest.centerZ()) + String.format(Locale.ROOT, " (%.0fm)", distance)));
-		}
-		HistoryRow focus = focusedRow();
-		if (focus != null) {
-			String title = focus.kind() == null ? "Stash" : focus.kind().label;
-			lines.add(ModuleHudElement.row("Focus", title + " at " + Coords.xyz(focus.x(), focus.y(), focus.z())));
-		}
-		return lines;
+		long s = (System.currentTimeMillis() - enabledAt) / 1000;
+		String runtime = s >= 3600 ? String.format("%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format("%d:%02d", s / 60, s % 60);
+		return List.of(ModuleHudElement.row("Stashes", count), ModuleHudElement.row("Runtime", runtime));
 	}
 
 	@Override
