@@ -40,6 +40,11 @@ public final class Jesus extends Module {
 		Solid, Ignore
 	}
 
+	/** Bob floats you at the surface with the push-up alone: the water never turns solid. */
+	public enum WaterMode {
+		Solid, Bob, Ignore
+	}
+
 	public enum AcMode implements dev.coffeeclient.setting.Labeled {
 		OFF("Off"), NCP("NCP swim"), MATRIX_ZOOM("Matrix zoom"), MATRIX_BOB("Matrix bob"), VULCAN("Vulcan 2.9.1");
 
@@ -62,11 +67,11 @@ public final class Jesus extends Module {
 	public final BooleanSetting powderSnow = setting(new BooleanSetting("Powder snow", "Walk on powder snow", true));
 	public final BooleanSetting ncpBypass = setting(new BooleanSetting("NCP bypass", "Extra bypass for NoCheatPlus servers", false));
 	public final BooleanSetting slowDown = setting(new BooleanSetting("Slow down", "Extra movement option for the NCP bypass", false).visibleWhen(ncpBypass::get));
-	public final EnumSetting<Mode> waterMode = setting(new EnumSetting<>("Water mode", "How to treat water", Mode.Solid));
-	public final BooleanSetting dipIfBurning = setting(new BooleanSetting("Dip if burning", "Enter water while on fire", true).visibleWhen(() -> waterMode.get() == Mode.Solid));
-	public final BooleanSetting dipOnSneakWater = setting(new BooleanSetting("Dip on sneak", "Enter water while sneaking", true).visibleWhen(() -> waterMode.get() == Mode.Solid));
-	public final BooleanSetting dipOnFallWater = setting(new BooleanSetting("Dip on fall", "Enter water after a long fall", true).visibleWhen(() -> waterMode.get() == Mode.Solid));
-	public final NumberSetting dipFallHeightWater = setting(new NumberSetting("Water fall height", "Fall height that lets you into the water", 4, 1, 255, 1).visibleWhen(() -> waterMode.get() == Mode.Solid && dipOnFallWater.get()));
+	public final EnumSetting<WaterMode> waterMode = setting(new EnumSetting<>("Water mode", "How to treat water: stand on it, bob at the surface, or swim", WaterMode.Solid));
+	public final BooleanSetting dipIfBurning = setting(new BooleanSetting("Dip if burning", "Enter water while on fire", true).visibleWhen(() -> waterMode.get() != WaterMode.Ignore));
+	public final BooleanSetting dipOnSneakWater = setting(new BooleanSetting("Dip on sneak", "Enter water while sneaking", true).visibleWhen(() -> waterMode.get() != WaterMode.Ignore));
+	public final BooleanSetting dipOnFallWater = setting(new BooleanSetting("Dip on fall", "Enter water after a long fall", true).visibleWhen(() -> waterMode.get() != WaterMode.Ignore));
+	public final NumberSetting dipFallHeightWater = setting(new NumberSetting("Water fall height", "Fall height that lets you into the water", 4, 1, 255, 1).visibleWhen(() -> waterMode.get() != WaterMode.Ignore && dipOnFallWater.get()));
 	public final EnumSetting<Mode> lavaMode = setting(new EnumSetting<>("Lava mode", "How to treat lava", Mode.Solid));
 	public final BooleanSetting dipIfFireResistant = setting(new BooleanSetting("Dip if resistant", "Enter lava with fire resistance", true).visibleWhen(() -> lavaMode.get() == Mode.Solid));
 	public final BooleanSetting dipOnSneakLava = setting(new BooleanSetting("Dip on sneak", "Enter lava while sneaking", true).visibleWhen(() -> lavaMode.get() == Mode.Solid));
@@ -150,15 +155,19 @@ public final class Jesus extends Module {
 	public VoxelShape collisionShape(BlockState state, BlockPos pos, VoxelShape shape) {
 		if (state.getFluidState().isEmpty()) return shape;
 		var player = mc().player;
-		if (player == null) return shape;
+		if (player == null || mc().level == null) return shape;
 
+		// Solid at the fluid's own surface (8/9 for a source), not the block top: a gap between the two drops
+		// you back into the fluid, the push-up fires, and you bob.
+		float height = state.getFluidState().getHeight(mc().level, pos);
+		boolean above = player.getY() > pos.getY() + height - 1.0E-5F;
 		if ((state.getBlock() == Blocks.WATER || state.getFluidState().getType() == Fluids.WATER)
-			&& !player.isInWater() && waterShouldBeSolid() && pos.getY() <= player.getY() - 1) {
-			return Shapes.block();
+			&& waterMode.get() == WaterMode.Solid && !player.isInWater() && waterShouldBeSolid() && above) {
+			return Shapes.box(0, 0, 0, 1, height, 1);
 		}
 		if (state.getBlock() == Blocks.LAVA && !player.isInLava() && lavaShouldBeSolid()
-			&& (isLavaDangerous() || pos.getY() <= player.getY() - 1)) {
-			return Shapes.block();
+			&& (isLavaDangerous() || above)) {
+			return Shapes.box(0, 0, 0, 1, height, 1);
 		}
 		return shape;
 	}
@@ -277,7 +286,7 @@ public final class Jesus extends Module {
 		if (dipIfBurning.get() && player.isOnFire()) return false;
 		if (dipOnSneakWater.get() && mc().options.keyShift.isDown()) return false;
 		if (dipOnFallWater.get() && player.fallDistance > dipFallHeightWater.get()) return false;
-		return waterMode.get() == Mode.Solid;
+		return waterMode.get() != WaterMode.Ignore;
 	}
 
 	private boolean lavaShouldBeSolid() {

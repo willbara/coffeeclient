@@ -15,7 +15,6 @@
 		"BeaconBlockEntityAccessor",
 		"BlockItemMixin",
 		"BlockBehaviourMixin",
-		"BlockCollisionsMixin",
 		"BlockEntityRenderDispatcherMixin",
 		"BlockEntityRenderStateAccessor",
 		"BlockHitResultAccessor",
