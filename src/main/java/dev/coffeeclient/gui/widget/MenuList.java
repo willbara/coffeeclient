@@ -6,7 +6,6 @@ import dev.coffeeclient.util.Colors;
 import dev.coffeeclient.gui.fx.Shapes;
 import dev.coffeeclient.gui.anim.Anim;
 import dev.coffeeclient.gui.anim.Ease;
-import dev.coffeeclient.gui.anim.Motion;
 import dev.coffeeclient.gui.anim.Tween;
 import dev.coffeeclient.gui.UiState;
 import dev.coffeeclient.gui.theme.Theme;
@@ -64,13 +63,13 @@ public class MenuList extends Widget {
 		Draw.box(ui.g, x, y, width, shownH, t.panelHeader, t.glass() ? Colors.withAlpha(Colors.lerp(t.border, 0xFFFFFFFF, 0.3f), 0xC0) : t.accent(0xC0));
 		ui.g.enableScissor(x, y, x + width, y + shownH);
 		try {
-			drawEntries(ui, t, p);
+			drawEntries(ui, t);
 		} finally {
 			ui.g.disableScissor();
 		}
 	}
 
-	private void drawEntries(Ui ui, Theme t, float p) {
+	private void drawEntries(Ui ui, Theme t) {
 		int ry = y + 2;
 		if (header != null) {
 			Draw.text(ui.g, header, x + 5, ry + 2, t.dimText);
@@ -91,19 +90,14 @@ public class MenuList extends Widget {
 				Draw.rect(ui.g, x + 1, hy, 1, ROW_H, t.accent);
 			}
 		}
-		int index = 0;
 		for (Entry e : entries) {
 			boolean over = ry == hoverY;
-			float in = Motion.range(p, index * 0.06f, index * 0.06f + 0.5f);
-			index++;
-			Draw.pushAlpha(in);
 			int tx = x + 5;
 			if (e.swatch() != null) {
 				Draw.box(ui.g, tx, ry + 2, 8, 8, e.swatch(), t.border);
 				tx += 12;
 			}
-			Draw.text(ui.g, e.label(), tx + Math.round((1 - in) * 6), ry + 2, e.danger() ? t.error : over ? t.strongText() : t.text);
-			Draw.popAlpha();
+			Draw.text(ui.g, e.label(), tx, ry + 2, e.danger() ? t.error : over ? t.strongText() : t.text);
 			ry += ROW_H;
 		}
 	}
