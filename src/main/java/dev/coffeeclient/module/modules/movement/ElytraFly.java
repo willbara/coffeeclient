@@ -102,6 +102,15 @@ public final class ElytraFly extends Module {
 	public final NumberSetting verticalSpeed = group(new NumberSetting("Vertical speed", "How fast you go up and down", 1, 0, 10, 0.1)
 		.visibleWhen(() -> flightMode.get() != ElytraFlightModes.Pitch40 && !glidePhysicsMode()), "General");
 
+	public final KeybindSetting speedBoostKey = group(new KeybindSetting("Speed boost key", "Hold while flying to use the speed boost speeds below instead", KeybindSetting.UNBOUND)
+		.visibleWhen(() -> flightMode.get() != ElytraFlightModes.Pitch40 && !glidePhysicsMode()), "Speed boost");
+
+	public final NumberSetting speedBoostHorizontal = group(new NumberSetting("Speed boost horizontal", "Horizontal speed while the speed boost key is held", 3, 0, 10, 0.1)
+		.visibleWhen(() -> flightMode.get() != ElytraFlightModes.Pitch40 && !glidePhysicsMode()), "Speed boost");
+
+	public final NumberSetting speedBoostVertical = group(new NumberSetting("Speed boost vertical", "Vertical speed while the speed boost key is held", 2, 0, 10, 0.1)
+		.visibleWhen(() -> flightMode.get() != ElytraFlightModes.Pitch40 && !glidePhysicsMode()), "Speed boost");
+
 	public final BooleanSetting acceleration = group(new BooleanSetting("Acceleration", "Gradually accelerates your horizontal speed", false)
 		.visibleWhen(() -> flightMode.get() != ElytraFlightModes.Pitch40 && !glidePhysicsMode()), "General");
 
@@ -422,6 +431,21 @@ public final class ElytraFly extends Module {
 	}
 
 	/** Modes that steer through {@link ElytraFlightMode#adjustMove} on top of vanilla glide physics, not the speed settings. */
+	/** True while the speed boost key is held with no screen open (only the flight code asks, so only while flying). */
+	public boolean speedBoosting() {
+		return speedBoostKey.isBound() && mc().gui.screen() == null && KeyNames.isHeld(speedBoostKey.key());
+	}
+
+	/** Horizontal speed now: the boost speed while the boost key is held. */
+	public double horizontalSpeedNow() {
+		return speedBoosting() ? speedBoostHorizontal.get() : horizontalSpeed.get();
+	}
+
+	/** Vertical speed now: the boost speed while the boost key is held. */
+	public double verticalSpeedNow() {
+		return speedBoosting() ? speedBoostVertical.get() : verticalSpeed.get();
+	}
+
 	public boolean glidePhysicsMode() {
 		ElytraFlightModes m = flightMode.get();
 		return m == ElytraFlightModes.Bounce || m == ElytraFlightModes.Constant || m == ElytraFlightModes.Boost || m == ElytraFlightModes.Hold;

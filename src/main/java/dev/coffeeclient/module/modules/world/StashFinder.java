@@ -17,6 +17,7 @@ import dev.coffeeclient.render.Tracers;
 import dev.coffeeclient.util.WorldProjector;
 import dev.coffeeclient.render.WorldOverlays;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import dev.coffeeclient.module.modules.exploit.NewChunks;
 import dev.coffeeclient.module.modules.render.NaturalLoot;
 import dev.coffeeclient.module.modules.world.stashfinder.HistoryRow;
 import dev.coffeeclient.module.modules.world.stashfinder.Hub;
@@ -85,13 +86,16 @@ public final class StashFinder extends Module {
 		"minecraft:shulker_box", "minecraft:smoker");
 
 	public final BooleanSetting disableOnDisconnect = group(new BooleanSetting("Disable on disconnect", "Turn off when you leave the server", false), "General");
+	public final BooleanSetting disableOnDeath = group(new BooleanSetting("Disable on death or teleport", "Turn off when you die or the server moves you more than 16 blocks", false), "General");
 	public final ActionSetting clear = group(new ActionSetting("Clear history", "Forget every remembered stash and find for this server", this::clearAll), "General");
+	public final ActionSetting exportCsv = group(new ActionSetting("Export CSV", "Write this server's stashes to a CSV file next to the history", this::exportCsv), "General");
 
 	public final IdListSetting types = group(new IdListSetting("Storage types", "Block entities counted as storage",
 		DEFAULT_TYPES, () -> BuiltInRegistries.BLOCK_ENTITY_TYPE.keySet().stream()
 		.map(Identifier::toString).sorted().toList(), false).labels(StashFinder::typeName), "Scanning");
 	public final BooleanSetting containers = group(new BooleanSetting("Containers", "Find and save chunks full of storage (the original stash finder)", true), "Scanning");
 	public final NumberSetting minCount = group(new NumberSetting("Min containers", "Ignore chunks with fewer containers", 4, 1, 64, 1), "Scanning");
+	public final BooleanSetting oldChunksOnly = group(new BooleanSetting("Old chunks only", "Skip chunks NewChunks judges new: freshly generated land holds no player storage. Needs NewChunks on", false), "Scanning");
 	public final NumberSetting minDistance = group(new NumberSetting("Min distance", "Minimum distance from spawn (0, 0)", 0, 0, 10000, 16), "Scanning");
 	public final BooleanSetting skipTrialChambers = group(new BooleanSetting("Skip trial chambers", "Don't count containers that look like trial chamber loot", false), "Scanning");
 	public final BooleanSetting skipSpawnerRooms = group(new BooleanSetting("Skip spawner rooms", "Don't count chests next to a monster spawner (dungeons)", false), "Scanning");
@@ -208,6 +212,10 @@ public final class StashFinder extends Module {
 	private long historyGeneration;
 	private int ticks;
 	private boolean dirty;
+	/** Chunks waiting for a NewChunks verdict before Old chunks only lets them be counted, and when they started waiting. */
+	private final Map<ChunkPos, Long> pending = new LinkedHashMap<>();
+	private static final long VERDICT_WAIT_MS = 5000;
+	private boolean warnedNoNewChunks;
 
 	public StashFinder() {
 		super("StashFinder", List.of("Stash Finder"), Category.WORLD, "Finds and records player storage chunks.");
@@ -247,6 +255,18 @@ public final class StashFinder extends Module {
 		listen(Events.GameLeft.class, e -> {
 			if (disableOnDisconnect.get()) setEnabled(false);
 		});
+		listen(Events.EntityDeath.class, e -> {
+			if (disableOnDeath.get() && e.entity() == mc().player) {
+				info("Switched off after your death.");
+				setEnabled(false);
+			}
+		});
+		listen(Events.ServerTeleport.class, e -> {
+			if (disableOnDeath.get() && e.distance() > 16) {
+				info("Switched off after a teleport of " + Math.round(e.distance()) + " blocks.");
+				setEnabled(false);
+			}
+		});
 	}
 
 	/** The base-hunting detectors (for tests and the HUD). */
@@ -277,6 +297,7 @@ public final class StashFinder extends Module {
 	@Override
 	protected void onEnable() {
 		enabledAt = System.currentTimeMillis();
+		warnedNoNewChunks = false;
 	}
 
 	@Override
@@ -290,6 +311,7 @@ public final class StashFinder extends Module {
 		historyGeneration++;
 		hub.clear();
 		hubDimension = null;
+		pending.clear();
 		scoredZones = List.of();
 		reportedZones.clear();
 		detectorBoxes = List.of();
@@ -320,6 +342,7 @@ public final class StashFinder extends Module {
 			}
 		}
 
+		tickVerdicts(mc);
 		if (dirty && ticks % 100 == 0) save();
 
 		String dimension = mc.level.dimension().identifier().toString();
@@ -437,6 +460,11 @@ public final class StashFinder extends Module {
 	 * history with its new count, but is not drawn or reported as an active stash.
 	 */
 	private void scanChunk(LevelChunk chunk) {
+		scanChunk(chunk, false);
+	}
+
+	/** {@code waited}: the chunk already waited its turn for a verdict, so scan it whatever NewChunks says now. */
+	private void scanChunk(LevelChunk chunk, boolean waited) {
 		Minecraft mc = mc();
 		if (!isEnabled() || !containers.get() || mc.level == null || chunk.isEmpty()) return;
 		// A chunk can load before the first tick; load this server's history before recording into it.
@@ -444,6 +472,14 @@ public final class StashFinder extends Module {
 
 		String dimension = mc.level.dimension().identifier().toString();
 		ChunkPos pos = chunk.getPos();
+		NewChunks.Kind kind = chunkKind(pos);
+		if (oldChunksOnly.get() && newChunks().isEnabled()) {
+			if (kind == NewChunks.Kind.NEW) return;
+			if (kind == null && !waited) {
+				pending.putIfAbsent(pos, System.currentTimeMillis());
+				return;
+			}
+		}
 		Map<String, Integer> counts = new TreeMap<>();
 		long ySum = 0;
 		int yCount = 0;
@@ -471,14 +507,15 @@ public final class StashFinder extends Module {
 		long now = System.currentTimeMillis();
 		long lastSeen = previous == null || now - previous.lastSeen() >= SEEN_REFRESH_MS ? now : previous.lastSeen();
 		StashHistory.Stash current = new StashHistory.Stash(dimension, pos.x(), pos.z(), y, total, Map.copyOf(counts),
-			now, lastSeen, StashHistory.State.NEW);
+			now, lastSeen, StashHistory.State.NEW, kind == null ? null : kind.label);
 		StashHistory.Stash merged = previous == null ? current : StashHistory.merge(previous, current);
 		if (merged.equals(previous)) return;
 		stashes.put(key, merged);
 		dirty = true;
 		historyVersion++;
 		if (qualifies && (previous == null || previous.total() != total)) {
-			if (previous == null) report("Found stash at " + merged.centerX() + ", " + merged.centerZ() + " (" + total + " containers)");
+			String age = merged.age() == null ? "" : ", " + merged.age() + " chunk";
+			if (previous == null) report("Found stash at " + merged.centerX() + ", " + merged.centerZ() + " (" + total + " containers" + age + ")");
 			else report("Stash at " + merged.centerX() + ", " + merged.centerZ() + " now has " + total + " containers");
 		}
 	}
@@ -499,6 +536,78 @@ public final class StashFinder extends Module {
 			case Off -> {
 			}
 		}
+	}
+
+	private static NewChunks newChunks() {
+		return CoffeeClient.modules().get(NewChunks.class);
+	}
+
+	/** NewChunks' verdict for the chunk, or null when it has none (or is off). */
+	private static NewChunks.Kind chunkKind(ChunkPos pos) {
+		NewChunks module = newChunks();
+		return module.isEnabled() ? module.kind(pos) : null;
+	}
+
+	/**
+	 * Scans the chunks that waited for a verdict once they have one (or waited long enough), and once
+	 * a second fills in the age of remembered stashes NewChunks has judged since.
+	 */
+	private void tickVerdicts(Minecraft mc) {
+		if (oldChunksOnly.get() && !newChunks().isEnabled() && !warnedNoNewChunks) {
+			warnedNoNewChunks = true;
+			info("Old chunks only needs NewChunks on; counting every chunk until then.");
+		}
+		if (!pending.isEmpty()) {
+			long now = System.currentTimeMillis();
+			var it = pending.entrySet().iterator();
+			while (it.hasNext()) {
+				Map.Entry<ChunkPos, Long> e = it.next();
+				boolean timedOut = now - e.getValue() >= VERDICT_WAIT_MS;
+				if (!timedOut && chunkKind(e.getKey()) == null && newChunks().isEnabled()) continue;
+				it.remove();
+				var chunk = mc.level.getChunkSource().getChunk(e.getKey().x(), e.getKey().z(), net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false);
+				if (chunk instanceof LevelChunk levelChunk) scanChunk(levelChunk, true);
+			}
+		}
+		if (ticks % 20 != 0 || !newChunks().isEnabled()) return;
+		String dimension = mc.level.dimension().identifier().toString();
+		boolean changed = false;
+		for (Map.Entry<String, StashHistory.Stash> e : stashes.entrySet()) {
+			StashHistory.Stash stash = e.getValue();
+			if (stash.age() != null || !stash.dimension().equals(dimension)) continue;
+			NewChunks.Kind kind = chunkKind(new ChunkPos(stash.x(), stash.z()));
+			if (kind == null) continue;
+			e.setValue(stash.withAge(kind.label));
+			changed = true;
+		}
+		if (changed) {
+			dirty = true;
+			historyVersion++;
+		}
+	}
+
+	/** Writes this server's stashes as CSV beside the history file. */
+	private void exportCsv() {
+		Minecraft mc = mc();
+		if (mc.level != null) ensureServer(mc);
+		if (checkedServer == null || stashes.isEmpty()) {
+			info("No stashes to export yet.");
+			return;
+		}
+		List<StashHistory.Stash> rows = List.copyOf(stashes.values());
+		java.util.TreeSet<String> columns = new java.util.TreeSet<>();
+		for (StashHistory.Stash stash : rows) columns.addAll(stash.counts().keySet());
+		Path path = file(checkedServer).resolveSibling(checkedServer + ".csv");
+		String csv = StashHistory.toCsv(rows, List.copyOf(columns));
+		Async.io(() -> {
+			try {
+				java.nio.file.Files.createDirectories(path.getParent());
+				java.nio.file.Files.writeString(path, csv, java.nio.charset.StandardCharsets.UTF_8);
+				Minecraft.getInstance().execute(() -> info("Exported " + rows.size() + " stashes to " + path.toAbsolutePath()));
+			} catch (IOException e) {
+				Minecraft.getInstance().execute(() -> info("Could not write " + path + ": " + e.getMessage()));
+			}
+		});
 	}
 
 	private void clearAll() {
@@ -682,8 +791,7 @@ public final class StashFinder extends Module {
 	public void cycleState(String key) {
 		StashHistory.Stash stash = stashes.get(key);
 		if (stash != null) {
-			stashes.put(key, new StashHistory.Stash(stash.dimension(), stash.x(), stash.z(), stash.y(), stash.total(),
-				stash.counts(), stash.firstSeen(), stash.lastSeen(), stash.state().next()));
+			stashes.put(key, stash.withState(stash.state().next()));
 		} else {
 			StashHistory.Find find = finds.get(key);
 			if (find == null) return;
@@ -737,6 +845,7 @@ public final class StashFinder extends Module {
 			}
 			if (top.size() > shown) detail.append(" +").append(top.size() - shown);
 		}
+		if (stash.age() != null) detail.append(" · ").append(stash.age()).append(" chunk");
 		return detail.toString();
 	}
 

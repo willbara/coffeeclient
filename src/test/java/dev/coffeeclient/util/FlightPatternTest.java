@@ -187,7 +187,7 @@ class FlightPatternTest {
 
 	@Test
 	void trailHeadsForDetectionsAheadAndIgnoresStrays() {
-		FlightPattern.Trail trail = new FlightPattern.Trail(0, 60, 20, 200, 3);
+		FlightPattern.Trail trail = new FlightPattern.Trail(0, 60, 20, 200, 3, 1, FlightPattern.Trail.Split.Straight);
 		trail.points(java.util.List.of(new double[]{0, 100}, new double[]{-500, -10}));
 		assertEquals(0, trail.yaw(0, 0, 1), 1e-3);
 		trail.points(java.util.List.of(new double[]{-50, 50}));
@@ -196,10 +196,80 @@ class FlightPatternTest {
 
 	@Test
 	void trailCirclesWhenLostThenGivesUp() {
-		FlightPattern.Trail trail = new FlightPattern.Trail(0, 60, 2, 5, 3);
+		FlightPattern.Trail trail = new FlightPattern.Trail(0, 60, 2, 5, 3, 1, FlightPattern.Trail.Split.Straight);
 		for (int i = 0; i < 2; i++) trail.yaw(0, 0, 1);
 		assertEquals(3, trail.yaw(0, 0, 1), 1e-3);
 		for (int i = 0; i < 3; i++) trail.yaw(0, 0, 1);
 		assertTrue(trail.done());
+	}
+	@Test
+	void trailWaitsForEnoughDetectionsBeforeSteering() {
+		FlightPattern.Trail trail = new FlightPattern.Trail(0, 60, 2, 5, 3, 3, FlightPattern.Trail.Split.Straight);
+		trail.points(java.util.List.of(new double[]{-50, 50, 1}, new double[]{-60, 60, 2}));
+		for (int i = 0; i < 20; i++) assertEquals(0, trail.yaw(0, 0, 1), 1e-3, "holds the heading while searching");
+		assertTrue(!trail.done(), "never gives up before locking on");
+		trail.points(java.util.List.of(new double[]{-50, 50, 1}, new double[]{-60, 60, 2}, new double[]{-70, 70, 3}));
+		assertEquals(45, trail.yaw(0, 0, 1), 1e-3);
+		assertTrue(trail.locked());
+	}
+
+	@Test
+	void trailSplitPreferenceFavoursItsSide() {
+		// one detection 30 degrees right, one 30 degrees left: Right leans right of the middle
+		double r = Math.tan(Math.toRadians(30)) * 100;
+		java.util.List<double[]> fork = java.util.List.of(new double[]{r, 100, 1}, new double[]{-r, 100, 2});
+		FlightPattern.Trail straight = new FlightPattern.Trail(0, 60, 20, 200, 3, 1, FlightPattern.Trail.Split.Straight);
+		FlightPattern.Trail right = new FlightPattern.Trail(0, 60, 20, 200, 3, 1, FlightPattern.Trail.Split.Right);
+		FlightPattern.Trail left = new FlightPattern.Trail(0, 60, 20, 200, 3, 1, FlightPattern.Trail.Split.Left);
+		for (FlightPattern.Trail t : java.util.List.of(straight, right, left)) t.points(fork);
+		float s = straight.yaw(0, 0, 1);
+		assertTrue(right.yaw(0, 0, 1) > s, "right leans right");
+		assertTrue(left.yaw(0, 0, 1) < s, "left leans left");
+	}
+
+	@Test
+	void trailIgnoresAChunkDetectedAgain() {
+		FlightPattern.Trail trail = new FlightPattern.Trail(0, 60, 20, 200, 3, 1, FlightPattern.Trail.Split.Straight);
+		trail.points(java.util.List.of(new double[]{0, 100, 1}));
+		assertEquals(0, trail.yaw(0, 0, 1), 1e-3);
+		// the same chunk detected again later (reloaded) counts for nothing
+		trail.points(java.util.List.of(new double[]{-50, 50, 5}, new double[]{0, 100, 9}));
+		assertEquals(45, trail.yaw(0, 0, 1), 1e-3);
+	}
+
+	@Test
+	void lawnmowerCoversTheRectangleInEvenLanes() {
+		for (boolean alongX : new boolean[]{true, false}) {
+			Flyer flyer = new Flyer(alongX ? -90 : 0);
+			flyer.inertia = 0.3;
+			FlightPattern mower = new FlightPattern.Lawnmower(0, 0, 300, 300, 64, alongX);
+			double before = mower.remaining(0, 0);
+			// 300 / 64 rounds up to 5 gaps of 60: 6 lanes of 300 and 5 crossings of 60
+			assertEquals(6 * 300 + 5 * 60, before, 1e-6);
+			flyer.run(mower, 1.5, 12, 60000);
+			assertTrue(mower.done(), "finishes, alongX=" + alongX);
+			assertTrue(flyer.maxX > 285 && flyer.maxZ > 285 && flyer.minX > -20 && flyer.minZ > -20, "covers the rectangle");
+		}
+	}
+
+	@Test
+	void gotoStopsAtTheDestination() {
+		Flyer flyer = new Flyer(0);
+		FlightPattern go = new FlightPattern.Goto(0, 0, -400, 250);
+		double start = go.remaining(0, 0);
+		assertEquals(Math.hypot(400, 250), start, 1e-6);
+		flyer.run(go, 1.5, 12, 20000);
+		assertTrue(go.done());
+		assertTrue(Math.hypot(flyer.x + 400, flyer.z - 250) < 8, "ends at the destination: " + flyer.x + ", " + flyer.z);
+	}
+
+	@Test
+	void remainingShrinksAlongTheSpiral() {
+		FlightPattern spiral = new FlightPattern.Spiral(0, 0, 0, true, false, 200, 32, 6);
+		Flyer flyer = new Flyer(0);
+		double start = spiral.remaining(0, 0);
+		flyer.run(spiral, 1.5, 12, 2000);
+		assertTrue(spiral.remaining(flyer.x, flyer.z) < start - 1000, "about 3000 blocks flown");
+		assertTrue(Double.isNaN(new FlightPattern.Orbit(0, 0, 0, true, 100).remaining(0, 0)));
 	}
 }

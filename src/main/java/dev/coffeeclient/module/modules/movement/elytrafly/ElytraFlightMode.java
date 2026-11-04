@@ -183,8 +183,8 @@ public class ElytraFlightMode {
 	}
 
 	public void handleVerticalSpeed(Vec3 movement) {
-		if (mc.options.keyJump.isDown()) velY += 0.5 * elytraFly.verticalSpeed.get();
-		else if (mc.options.keyShift.isDown()) velY -= 0.5 * elytraFly.verticalSpeed.get();
+		if (mc.options.keyJump.isDown()) velY += 0.5 * elytraFly.verticalSpeedNow();
+		else if (mc.options.keyShift.isDown()) velY -= 0.5 * elytraFly.verticalSpeedNow();
 	}
 
 	public void handleFallMultiplier() {
@@ -197,7 +197,7 @@ public class ElytraFlightMode {
 			if (!Player.isMoving()) acceleration = 0;
 			acceleration = Math.min(
 				acceleration + elytraFly.accelerationMin.get() + elytraFly.accelerationStep.get() * .1,
-				elytraFly.horizontalSpeed.get()
+				elytraFly.horizontalSpeedNow()
 			);
 		} else {
 			acceleration = 0;
@@ -209,7 +209,7 @@ public class ElytraFlightMode {
 	}
 
 	protected double getSpeed() {
-		return elytraFly.acceleration.get() ? acceleration : elytraFly.horizontalSpeed.get();
+		return elytraFly.acceleration.get() ? acceleration : elytraFly.horizontalSpeedNow();
 	}
 
 	public String getHudString() {

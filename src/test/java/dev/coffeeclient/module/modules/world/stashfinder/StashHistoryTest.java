@@ -75,4 +75,34 @@ class StashHistoryTest {
 		assertEquals(10, merged.total());
 		assertEquals(25, merged.y());
 	}
+
+	@Test
+	void ageRoundTripsAndOldFilesLoadWithout() throws IOException {
+		StashHistory.Stash aged = new StashHistory.Stash("minecraft:overworld", 3, 4, 40, 6,
+			Map.of("minecraft:chest", 6), 100, 200, StashHistory.State.NEW, "old");
+		Path file = directory.resolve("aged.json");
+		Files.writeString(file, StashHistory.toJson(Map.of(aged.key(), aged), Map.of()));
+		assertEquals(aged, StashHistory.read(file).stashes().get(aged.key()));
+
+		// a file written before ages existed
+		Path old = directory.resolve("old.json");
+		Files.writeString(old, "{\"stashes\":[{\"dim\":\"minecraft:overworld\",\"x\":1,\"z\":2,\"total\":5,\"counts\":{\"minecraft:chest\":5}}]}");
+		StashHistory.Stash loaded = StashHistory.read(old).stashes().values().iterator().next();
+		assertEquals(null, loaded.age());
+
+		// a rescan that has no verdict keeps the age already known
+		StashHistory.Stash rescan = new StashHistory.Stash("minecraft:overworld", 3, 4, 40, 7,
+			Map.of("minecraft:chest", 7), 300, 400, StashHistory.State.NEW);
+		assertEquals("old", StashHistory.merge(aged, rescan).age());
+	}
+
+	@Test
+	void csvHasOneColumnPerType() {
+		StashHistory.Stash stash = new StashHistory.Stash("minecraft:overworld", 1, -1, 64, 7,
+			Map.of("minecraft:chest", 5, "minecraft:barrel", 2), 0, 0, StashHistory.State.VISITED, "old-version");
+		String csv = StashHistory.toCsv(java.util.List.of(stash), java.util.List.of("minecraft:barrel", "minecraft:chest", "minecraft:hopper"));
+		String[] lines = csv.split("\n");
+		assertEquals("dimension,x,y,z,total,minecraft:barrel,minecraft:chest,minecraft:hopper,age,state,first_seen,last_seen", lines[0]);
+		assertEquals("minecraft:overworld,24,64,-8,7,2,5,0,old-version,visited,,", lines[1]);
+	}
 }

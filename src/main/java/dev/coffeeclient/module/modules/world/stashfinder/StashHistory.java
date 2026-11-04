@@ -27,9 +27,24 @@ public final class StashHistory {
 		}
 	}
 
-	/** A container stash chunk. {@code x}/{@code z} are chunk coordinates. */
+	/**
+	 * A container stash chunk. {@code x}/{@code z} are chunk coordinates. {@code age} is what NewChunks
+	 * judged the chunk to be ("new", "old", "old-version", ...), or null when it had no verdict.
+	 */
 	public record Stash(String dimension, int x, int z, int y, int total, Map<String, Integer> counts,
-						long firstSeen, long lastSeen, State state) {
+						long firstSeen, long lastSeen, State state, String age) {
+		public Stash(String dimension, int x, int z, int y, int total, Map<String, Integer> counts,
+					 long firstSeen, long lastSeen, State state) {
+			this(dimension, x, z, y, total, counts, firstSeen, lastSeen, state, null);
+		}
+
+		public Stash withAge(String age) {
+			return new Stash(dimension, x, z, y, total, counts, firstSeen, lastSeen, state, age);
+		}
+
+		public Stash withState(State state) {
+			return new Stash(dimension, x, z, y, total, counts, firstSeen, lastSeen, state, age);
+		}
 		public int centerX() {
 			return x * 16 + 8;
 		}
@@ -68,12 +83,13 @@ public final class StashHistory {
 		return dimension + "|" + kind.name() + "|" + chunkX + "," + chunkZ;
 	}
 
-	/** Keep the current scan's contents but the earliest first-seen, latest last-seen and user state. */
+	/** Keep the current scan's contents but the earliest first-seen, latest last-seen, user state and any known age. */
 	public static Stash merge(Stash loaded, Stash current) {
 		return new Stash(current.dimension(), current.x(), current.z(), current.y(), current.total(), current.counts(),
 			earliest(loaded.firstSeen(), current.firstSeen()),
 			Math.max(loaded.lastSeen(), current.lastSeen()),
-			current.state() == State.NEW ? loaded.state() : current.state());
+			current.state() == State.NEW ? loaded.state() : current.state(),
+			current.age() != null ? current.age() : loaded.age());
 	}
 
 	public static Find merge(Find loaded, Find current) {
@@ -102,6 +118,7 @@ public final class StashHistory {
 			object.addProperty("firstSeen", stash.firstSeen());
 			object.addProperty("lastSeen", stash.lastSeen());
 			object.addProperty("state", stash.state().name());
+			if (stash.age() != null) object.addProperty("age", stash.age());
 			JsonObject counts = new JsonObject();
 			stash.counts().forEach(counts::addProperty);
 			object.add("counts", counts);
@@ -125,6 +142,29 @@ public final class StashHistory {
 		}
 		root.add("finds", findArray);
 		return JsonFiles.GSON.toJson(root);
+	}
+
+	/**
+	 * The stashes as CSV: dimension, block x/y/z of the chunk centre, total, one column per storage
+	 * type in {@code types}, then age, state and the first/last seen times (ISO-8601, UTC).
+	 */
+	public static String toCsv(Iterable<Stash> stashes, java.util.List<String> types) {
+		StringBuilder out = new StringBuilder("dimension,x,y,z,total");
+		for (String type : types) out.append(',').append(type);
+		out.append(",age,state,first_seen,last_seen\n");
+		for (Stash stash : stashes) {
+			out.append(stash.dimension()).append(',').append(stash.centerX()).append(',').append(stash.y()).append(',')
+				.append(stash.centerZ()).append(',').append(stash.total());
+			for (String type : types) out.append(',').append(stash.counts().getOrDefault(type, 0));
+			out.append(',').append(stash.age() == null ? "" : stash.age())
+				.append(',').append(stash.state().name().toLowerCase(Locale.ROOT))
+				.append(',').append(time(stash.firstSeen())).append(',').append(time(stash.lastSeen())).append('\n');
+		}
+		return out.toString();
+	}
+
+	private static String time(long epochMs) {
+		return epochMs <= 0 ? "" : java.time.Instant.ofEpochMilli(epochMs).toString();
 	}
 
 	public static Loaded read(Path path) {
@@ -154,7 +194,8 @@ public final class StashHistory {
 					int total = object.has("total") ? object.get("total").getAsInt()
 						: counts.values().stream().mapToInt(Integer::intValue).sum();
 					Stash stash = new Stash(dimension, x, z, y, total, Map.copyOf(counts),
-						longField(object, "firstSeen"), longField(object, "lastSeen"), state(object));
+						longField(object, "firstSeen"), longField(object, "lastSeen"), state(object),
+						object.has("age") ? object.get("age").getAsString() : null);
 					stashes.put(stash.key(), stash);
 				} catch (RuntimeException e) {
 					// skip a malformed row rather than losing the whole file

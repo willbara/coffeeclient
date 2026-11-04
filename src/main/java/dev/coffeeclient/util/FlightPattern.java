@@ -18,6 +18,11 @@ public interface FlightPattern {
 	default void resync(double x, double z) {
 	}
 
+	/** Blocks left to fly from {@code (x, z)}, or NaN when the pattern has no end. */
+	default double remaining(double x, double z) {
+		return Double.NaN;
+	}
+
 	static float yawOf(double dx, double dz) {
 		return (float) Math.toDegrees(Math.atan2(-dx, dz));
 	}
@@ -82,6 +87,15 @@ public interface FlightPattern {
 			return done;
 		}
 
+		/** Arc length left: the angle still to turn times the mean of the current and final radius. */
+		@Override
+		public double remaining(double x, double z) {
+			double endProgress = Math.abs(radius - endRadius) * 2 * Math.PI / spacing;
+			double angleLeft = Math.max(0, endProgress - progress);
+			double rho = Math.hypot(x - cx, z - cz);
+			return angleLeft * (rho + (outward ? radius : endRadius)) / 2;
+		}
+
 		/** Back onto the spiral at the lap nearest the current radius, keeping the angle around the centre. */
 		@Override
 		public void resync(double x, double z) {
@@ -106,43 +120,26 @@ public interface FlightPattern {
 	}
 
 	/**
-	 * Square spiral: straight lanes {@code spacing} apart, turning 90 degrees toward the turning side at
-	 * each corner. Inward, the start is the outer corner of a {@code side} x {@code side} square and the
-	 * laps shrink to {@code innerSide}; outward, the start is the inner end and the laps grow until the
-	 * square is closed. Like {@link Spiral}, the yaw aims at a point a little ahead along the path, so
-	 * corners are rounded off and drift is pulled back onto the lane.
+	 * A path of straight segments flown by pure pursuit: the yaw aims at a point a little ahead along
+	 * the path, so corners are rounded off and drift is pulled back onto the line.
 	 */
-	final class Square implements FlightPattern {
-		private final List<double[]> points = new ArrayList<>();
+	abstract class Polyline implements FlightPattern {
+		protected final List<double[]> points = new ArrayList<>();
 		private int seg;
 		private boolean done;
 
-		public Square(double x, double z, float startYaw, boolean clockwise, boolean outward, double side, double spacing, double innerSide) {
-			// edge lengths from the middle out: two of each, growing by spacing, then one more to close the outer edge
-			List<Double> lengths = new ArrayList<>();
-			for (double len = innerSide; len <= side; len += spacing) {
-				lengths.add(len);
-				lengths.add(len);
+		/** Adds the next corner; a point on top of the last one is skipped. */
+		protected void to(double x, double z) {
+			if (!points.isEmpty()) {
+				double[] last = points.getLast();
+				if (Math.hypot(x - last[0], z - last[1]) < 1e-6) return;
 			}
-			if (lengths.isEmpty()) {
-				lengths.add(side);
-				lengths.add(side);
-			}
-			lengths.add(lengths.getLast());
-			if (!outward) java.util.Collections.reverse(lengths);
-
-			double rad = Math.toRadians(startYaw);
-			double dx = -Math.sin(rad), dz = Math.cos(rad);
 			points.add(new double[]{x, z});
-			for (double len : lengths) {
-				x += dx * len;
-				z += dz * len;
-				points.add(new double[]{x, z});
-				// right of (dx, dz) is (-dz, dx), left is (dz, -dx)
-				double t = dx;
-				dx = clockwise ? -dz : dz;
-				dz = clockwise ? t : -t;
-			}
+		}
+
+		/** How close to the last point counts as arrived. */
+		protected double finishWithin(double speed) {
+			return Math.max(2, speed * 4);
 		}
 
 		/** How far along segment {@code i} the closest point to {@code (x, z)} is, from 0 to its length. */
@@ -170,10 +167,14 @@ public interface FlightPattern {
 
 		@Override
 		public float yaw(double x, double z, double speed) {
+			if (points.size() < 2) {
+				done = true;
+				return 0;
+			}
 			int last = points.size() - 2;
 			while (seg < last && distance(seg + 1, x, z) < distance(seg, x, z)) seg++;
 			double t = along(seg, x, z);
-			if (seg == last && length(seg) - t < Math.max(2, speed * 4)) done = true;
+			if (seg == last && length(seg) - t < finishWithin(speed)) done = true;
 
 			int i = seg;
 			double left = t + Math.max(10, speed * 10);
@@ -187,9 +188,18 @@ public interface FlightPattern {
 			return done;
 		}
 
-		/** Back onto the lane nearest where the player is now. */
+		@Override
+		public double remaining(double x, double z) {
+			if (points.size() < 2) return 0;
+			double left = length(seg) - along(seg, x, z);
+			for (int i = seg + 1; i < points.size() - 1; i++) left += length(i);
+			return left;
+		}
+
+		/** Back onto the segment nearest where the player is now. */
 		@Override
 		public void resync(double x, double z) {
+			if (points.size() < 2) return;
 			double best = Double.MAX_VALUE;
 			for (int i = 0; i < points.size() - 1; i++) {
 				double d = distance(i, x, z);
@@ -199,6 +209,84 @@ public interface FlightPattern {
 				}
 			}
 			done = false;
+		}
+	}
+
+	/**
+	 * Square spiral: straight lanes {@code spacing} apart, turning 90 degrees toward the turning side at
+	 * each corner. Inward, the start is the outer corner of a {@code side} x {@code side} square and the
+	 * laps shrink to {@code innerSide}; outward, the start is the inner end and the laps grow until the
+	 * square is closed.
+	 */
+	final class Square extends Polyline {
+		public Square(double x, double z, float startYaw, boolean clockwise, boolean outward, double side, double spacing, double innerSide) {
+			// edge lengths from the middle out: two of each, growing by spacing, then one more to close the outer edge
+			List<Double> lengths = new ArrayList<>();
+			for (double len = innerSide; len <= side; len += spacing) {
+				lengths.add(len);
+				lengths.add(len);
+			}
+			if (lengths.isEmpty()) {
+				lengths.add(side);
+				lengths.add(side);
+			}
+			lengths.add(lengths.getLast());
+			if (!outward) java.util.Collections.reverse(lengths);
+
+			double rad = Math.toRadians(startYaw);
+			double dx = -Math.sin(rad), dz = Math.cos(rad);
+			to(x, z);
+			for (double len : lengths) {
+				x += dx * len;
+				z += dz * len;
+				to(x, z);
+				// right of (dx, dz) is (-dz, dx), left is (dz, -dx)
+				double t = dx;
+				dx = clockwise ? -dz : dz;
+				dz = clockwise ? t : -t;
+			}
+		}
+	}
+
+	/**
+	 * Back-and-forth lanes covering the rectangle from {@code (x, z)} to the far corner. Lanes run
+	 * along X (or Z) and are spread evenly across the other axis, never more than {@code spacing} apart.
+	 */
+	final class Lawnmower extends Polyline {
+		public Lawnmower(double x, double z, double farX, double farZ, double spacing, boolean alongX) {
+			// Work in (u = along the lanes, v = across them), then map back.
+			double u0 = alongX ? x : z, v0 = alongX ? z : x;
+			double u1 = alongX ? farX : farZ, v1 = alongX ? farZ : farX;
+			double across = v1 - v0;
+			int gaps = Math.max(1, (int) Math.ceil(Math.abs(across) / Math.max(1, spacing)));
+			if (Math.abs(across) < 1) gaps = 0;
+			double step = gaps == 0 ? 0 : across / gaps;
+			boolean forward = true;
+			for (int lane = 0; lane <= gaps; lane++) {
+				double v = v0 + step * lane;
+				double from = forward ? u0 : u1, until = forward ? u1 : u0;
+				add(alongX, from, v);
+				add(alongX, until, v);
+				forward = !forward;
+			}
+		}
+
+		private void add(boolean alongX, double u, double v) {
+			if (alongX) to(u, v);
+			else to(v, u);
+		}
+	}
+
+	/** A straight line to {@code (x, z)}, finished within 5 blocks of it. */
+	final class Goto extends Polyline {
+		public Goto(double fromX, double fromZ, double x, double z) {
+			to(fromX, fromZ);
+			to(x, z);
+		}
+
+		@Override
+		protected double finishWithin(double speed) {
+			return Math.max(5, speed * 4);
 		}
 	}
 
@@ -229,41 +317,73 @@ public interface FlightPattern {
 	}
 
 	/**
-	 * Follows a trail of freshly generated chunks: heads for the recency-weighted middle of the
-	 * detections ahead, ignores ones more than {@code maxDeviation} degrees off the trail, circles
-	 * when none have come for {@code lostTicks}, and gives up after {@code giveUpTicks}.
+	 * Follows a trail of detected chunks (a line of chunks someone loaded before you): heads for the
+	 * recency-weighted middle of the detections ahead, ignores ones more than {@code maxDeviation}
+	 * degrees off the trail, circles when none have come for {@code lostTicks}, and gives up after
+	 * {@code giveUpTicks}. Until {@code lockOn} detections have come in it just holds the start heading.
 	 */
 	final class Trail implements FlightPattern {
+		/** Which side to favour where the trail splits. */
+		public enum Split { Straight, Left, Right }
+
 		private final double maxDeviation, circleRate;
-		private final int lostTicks, giveUpTicks;
+		private final int lostTicks, giveUpTicks, lockOn;
+		private final Split split;
 		private List<double[]> points = List.of();
+		/** When each chunk centre was first detected: a later detection of the same chunk (a reload) is ignored. */
+		private final java.util.Map<Long, Double> firstSeen = new java.util.HashMap<>();
 		private float heading;
 		private int sinceSeen;
+		private boolean locked;
 
-		public Trail(float startYaw, double maxDeviation, int lostTicks, int giveUpTicks, double circleRate) {
+		public Trail(float startYaw, double maxDeviation, int lostTicks, int giveUpTicks, double circleRate, int lockOn, Split split) {
 			this.heading = startYaw;
 			this.maxDeviation = maxDeviation;
 			this.lostTicks = lostTicks;
 			this.giveUpTicks = giveUpTicks;
 			this.circleRate = circleRate;
+			this.lockOn = Math.max(1, lockOn);
+			this.split = split;
+			// One detection to lock on: steer (and circle when lost) from the start.
+			this.locked = this.lockOn <= 1;
 		}
 
-		/** This tick's recent detections (block x, z), oldest first. */
-		public void points(List<double[]> points) {
-			this.points = points;
+		/** This tick's recent detections (block x, z, and the detection time), oldest first. */
+		public void points(List<double[]> detections) {
+			List<double[]> kept = new ArrayList<>(detections.size());
+			for (double[] p : detections) {
+				long key = ((long) Math.floor(p[0]) << 32) ^ ((long) Math.floor(p[1]) & 0xFFFFFFFFL);
+				double time = p.length > 2 ? p[2] : 0;
+				Double first = firstSeen.putIfAbsent(key, time);
+				if (first == null || first == time) kept.add(p);
+			}
+			if (firstSeen.size() > 4096) firstSeen.clear();
+			this.points = kept;
+		}
+
+		public boolean locked() {
+			return locked;
 		}
 
 		@Override
 		public float yaw(double x, double z, double speed) {
+			if (!locked) {
+				if (points.size() < lockOn) return heading;
+				locked = true;
+			}
 			double hx = -Math.sin(Math.toRadians(heading)), hz = Math.cos(Math.toRadians(heading));
 			double sx = 0, sz = 0, weight = 0;
 			for (int i = 0; i < points.size(); i++) {
 				double dx = points.get(i)[0] - x, dz = points.get(i)[1] - z;
 				if (dx * hx + dz * hz <= 0) continue;
-				if (Math.abs(wrap(yawOf(dx, dz) - heading)) > maxDeviation) continue;
-				sx += dx * (i + 1);
-				sz += dz * (i + 1);
-				weight += i + 1;
+				float off = wrap(yawOf(dx, dz) - heading);
+				if (Math.abs(off) > maxDeviation) continue;
+				double w = i + 1;
+				// Turning right adds degrees, so the right side is a positive offset.
+				if (split == Split.Right && off > 0 || split == Split.Left && off < 0) w *= 2;
+				sx += dx * w;
+				sz += dz * w;
+				weight += w;
 			}
 			if (weight > 0) {
 				heading = yawOf(sx / weight, sz / weight);
@@ -276,7 +396,7 @@ public interface FlightPattern {
 
 		@Override
 		public boolean done() {
-			return sinceSeen > giveUpTicks;
+			return locked && sinceSeen > giveUpTicks;
 		}
 
 		private static float wrap(float degrees) {

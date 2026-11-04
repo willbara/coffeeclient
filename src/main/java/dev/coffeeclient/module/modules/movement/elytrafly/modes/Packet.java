@@ -36,15 +36,15 @@ public class Packet extends ElytraFlightMode {
 			return;
 
 		if (mc.options.keyUp.isDown()) {
-			vec3d.add(0, 0, elytraFly.horizontalSpeed.get());
+			vec3d.add(0, 0, elytraFly.horizontalSpeedNow());
 			vec3d.yRot(-(float) Math.toRadians(mc.player.getYRot()));
 		} else if (mc.options.keyDown.isDown()) {
-			vec3d.add(0, 0, elytraFly.horizontalSpeed.get());
+			vec3d.add(0, 0, elytraFly.horizontalSpeedNow());
 			vec3d.yRot((float) Math.toRadians(mc.player.getYRot()));
 		}
 
-		if (mc.options.keyJump.isDown()) vec3d.add(0, elytraFly.verticalSpeed.get(), 0);
-		else vec3d.add(0, -elytraFly.verticalSpeed.get(), 0);
+		if (mc.options.keyJump.isDown()) vec3d.add(0, elytraFly.verticalSpeedNow(), 0);
+		else vec3d.add(0, -elytraFly.verticalSpeedNow(), 0);
 
 		mc.player.setDeltaMovement(vec3d);
 		mc.getConnection().send(new ServerboundPlayerCommandPacket(mc.player, ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
@@ -63,6 +63,6 @@ public class Packet extends ElytraFlightMode {
 	public void onMove() {
 		if (mc.player == null) return;
 		mc.player.getAbilities().flying = true;
-		mc.player.getAbilities().setFlyingSpeed(elytraFly.horizontalSpeed.get().floatValue() / 20);
+		mc.player.getAbilities().setFlyingSpeed((float) elytraFly.horizontalSpeedNow() / 20);
 	}
 }

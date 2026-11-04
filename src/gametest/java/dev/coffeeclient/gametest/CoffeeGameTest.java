@@ -47,6 +47,7 @@ import dev.coffeeclient.module.modules.render.StorageESP;
 import dev.coffeeclient.module.modules.render.Trajectories;
 import dev.coffeeclient.module.modules.render.XRay;
 import dev.coffeeclient.module.modules.exploit.NewChunks;
+import dev.coffeeclient.module.modules.exploit.newchunks.PaletteAge;
 import dev.coffeeclient.render.Tracers;
 import dev.coffeeclient.render.WorldOverlays;
 import dev.coffeeclient.util.BlockActions;
@@ -204,6 +205,29 @@ public final class CoffeeGameTest implements FabricClientGameTest {
 		check(NewChunks.reasonsWithin(Set.of(new ChunkPos(0, 0), new ChunkPos(1, 0), new ChunkPos(9000, 0)),
 			Map.of(new ChunkPos(0, 0), new BlockPos(1, 64, 1), new ChunkPos(9000, 0), new BlockPos(9001, 64, 1)), new BlockPos(0, 64, 0), 128)
 			.equals(List.of(new BlockPos(1, 64, 1))), "NewChunks reasons: only chunks that have one, within the distance");
+
+		// The palette check against real world-generation and disk-save code.
+		String palettes = context.computeOnClient(mc -> {
+			var registries = mc.level.registryAccess();
+			var factory = net.minecraft.world.level.chunk.PalettedContainerFactory.create(registries);
+			var biomeRegistry = registries.lookupOrThrow(net.minecraft.core.registries.Registries.BIOME);
+			net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> barrens = biomeRegistry.getOrThrow(net.minecraft.world.level.biome.Biomes.END_BARRENS);
+			java.util.function.Predicate<net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> plains =
+				biome -> biome.is(net.minecraft.world.level.biome.Biomes.PLAINS);
+			var section = new net.minecraft.world.level.chunk.LevelChunkSection(factory);
+			section.fillBiomesFromNoise((x, y, z, sampler) -> barrens, null, 0, 0, 0);
+			var freshBiomes = PaletteAge.biomes(section.getBiomes(), plains);
+			var savedBiomes = PaletteAge.biomes(factory.biomeContainerCodec().parse(net.minecraft.nbt.NbtOps.INSTANCE,
+				factory.biomeContainerCodec().encodeStart(net.minecraft.nbt.NbtOps.INSTANCE, section.getBiomes()).getOrThrow()).getOrThrow(), plains);
+			// Blocks set out of storage order, as generation does: stone first, then dirt at index 0.
+			section.setBlockState(5, 5, 5, Blocks.STONE.defaultBlockState(), false);
+			section.setBlockState(0, 0, 0, Blocks.DIRT.defaultBlockState(), false);
+			var freshBlocks = PaletteAge.of(section.getStates());
+			var savedBlocks = PaletteAge.of(factory.blockStatesContainerCodec().parse(net.minecraft.nbt.NbtOps.INSTANCE,
+				factory.blockStatesContainerCodec().encodeStart(net.minecraft.nbt.NbtOps.INSTANCE, section.getStates()).getOrThrow()).getOrThrow());
+			return freshBiomes + " " + savedBiomes + " " + freshBlocks + " " + savedBlocks;
+		});
+		check(palettes.equals("FRESH SAVED FRESH PACKED"), "NewChunks palette check tells generated from saved sections (" + palettes + ")");
 
 		Path dir = context.computeOnClient(mc -> CoffeeClient.config().directory().resolve("chunkdata").resolve("singleplayer").resolve("minecraft_overworld"));
 		try {
