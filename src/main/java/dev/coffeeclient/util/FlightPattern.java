@@ -106,47 +106,99 @@ public interface FlightPattern {
 	}
 
 	/**
-	 * Back-and-forth sweep of a {@code side} x {@code side} square: along the start heading, across to
-	 * the turning side, then lanes {@code spacing} apart coming back toward the start.
+	 * Square spiral: straight lanes {@code spacing} apart, turning 90 degrees toward the turning side at
+	 * each corner. Inward, the start is the outer corner of a {@code side} x {@code side} square and the
+	 * laps shrink to {@code innerSide}; outward, the start is the inner end and the laps grow until the
+	 * square is closed. Like {@link Spiral}, the yaw aims at a point a little ahead along the path, so
+	 * corners are rounded off and drift is pulled back onto the lane.
 	 */
 	final class Square implements FlightPattern {
 		private final List<double[]> points = new ArrayList<>();
-		private int next;
+		private int seg;
+		private boolean done;
 
-		public Square(double x, double z, float startYaw, boolean clockwise, double side, double spacing) {
+		public Square(double x, double z, float startYaw, boolean clockwise, boolean outward, double side, double spacing, double innerSide) {
+			// edge lengths from the middle out: two of each, growing by spacing, then one more to close the outer edge
+			List<Double> lengths = new ArrayList<>();
+			for (double len = innerSide; len <= side; len += spacing) {
+				lengths.add(len);
+				lengths.add(len);
+			}
+			if (lengths.isEmpty()) {
+				lengths.add(side);
+				lengths.add(side);
+			}
+			lengths.add(lengths.getLast());
+			if (!outward) java.util.Collections.reverse(lengths);
+
 			double rad = Math.toRadians(startYaw);
-			double fx = -Math.sin(rad), fz = Math.cos(rad);
-			double sx = clockwise ? -Math.cos(rad) : Math.cos(rad), sz = clockwise ? -Math.sin(rad) : Math.sin(rad);
-			// a: along the heading, b: toward the turning side
-			add(x, z, fx, fz, sx, sz, side, 0);
-			add(x, z, fx, fz, sx, sz, side, side);
-			boolean up = true;
-			for (int k = 1; ; k++) {
-				double a = Math.max(0, side - k * spacing);
-				double from = up ? side : spacing, to = up ? spacing : side;
-				add(x, z, fx, fz, sx, sz, a, from);
-				add(x, z, fx, fz, sx, sz, a, to);
-				up = !up;
-				if (a <= 0) break;
+			double dx = -Math.sin(rad), dz = Math.cos(rad);
+			points.add(new double[]{x, z});
+			for (double len : lengths) {
+				x += dx * len;
+				z += dz * len;
+				points.add(new double[]{x, z});
+				// right of (dx, dz) is (-dz, dx), left is (dz, -dx)
+				double t = dx;
+				dx = clockwise ? -dz : dz;
+				dz = clockwise ? t : -t;
 			}
 		}
 
-		private void add(double x, double z, double fx, double fz, double sx, double sz, double a, double b) {
-			points.add(new double[]{x + fx * a + sx * b, z + fz * a + sz * b});
+		/** How far along segment {@code i} the closest point to {@code (x, z)} is, from 0 to its length. */
+		private double along(int i, double x, double z) {
+			double[] a = points.get(i), b = points.get(i + 1);
+			double len = length(i);
+			return Math.clamp(((x - a[0]) * (b[0] - a[0]) + (z - a[1]) * (b[1] - a[1])) / len, 0, len);
+		}
+
+		private double length(int i) {
+			double[] a = points.get(i), b = points.get(i + 1);
+			return Math.hypot(b[0] - a[0], b[1] - a[1]);
+		}
+
+		private double[] pointAt(int i, double t) {
+			double[] a = points.get(i), b = points.get(i + 1);
+			double f = t / length(i);
+			return new double[]{a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f};
+		}
+
+		private double distance(int i, double x, double z) {
+			double[] p = pointAt(i, along(i, x, z));
+			return Math.hypot(p[0] - x, p[1] - z);
 		}
 
 		@Override
 		public float yaw(double x, double z, double speed) {
-			double reach = Math.max(2, speed * 4);
-			while (next < points.size() && Math.hypot(points.get(next)[0] - x, points.get(next)[1] - z) < reach) next++;
-			if (next >= points.size()) return 0;
-			double[] p = points.get(next);
-			return yawOf(p[0] - x, p[1] - z);
+			int last = points.size() - 2;
+			while (seg < last && distance(seg + 1, x, z) < distance(seg, x, z)) seg++;
+			double t = along(seg, x, z);
+			if (seg == last && length(seg) - t < Math.max(2, speed * 4)) done = true;
+
+			int i = seg;
+			double left = t + Math.max(10, speed * 10);
+			while (i < last && left > length(i)) left -= length(i++);
+			double[] target = pointAt(i, Math.min(left, length(i)));
+			return yawOf(target[0] - x, target[1] - z);
 		}
 
 		@Override
 		public boolean done() {
-			return next >= points.size();
+			return done;
+		}
+
+		/** Back onto the lane nearest where the player is now. */
+		@Override
+		public void resync(double x, double z) {
+			double best = Double.MAX_VALUE;
+			for (int i = 0; i < points.size() - 1; i++) {
+				double d = distance(i, x, z);
+				if (d < best) {
+					best = d;
+					seg = i;
+				}
+			}
+			done = false;
 		}
 	}
 

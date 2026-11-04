@@ -1151,15 +1151,17 @@ public final class CoffeeGameTest implements FabricClientGameTest {
 		check(fresh, "AutoFly starts a new path after \"Start a new path\"");
 	}
 
-	/** AutoFly steers a creative-flying player in a spiral, in and out, and switches itself off at the end. */
+	/** AutoFly steers a creative-flying player in a round and a square spiral, in and out, and switches itself off at the end. */
 	private static void autoFlySpirals(ClientGameTestContext context, TestServerContext server) {
 		var fly = module(dev.coffeeclient.module.modules.movement.AutoFly.class);
+		for (var pattern : java.util.List.of(dev.coffeeclient.module.modules.movement.AutoFly.Pattern.Spiral, dev.coffeeclient.module.modules.movement.AutoFly.Pattern.Square))
 		for (var spin : dev.coffeeclient.module.modules.movement.AutoFly.Spin.values()) {
 			server.runCommand("tp @a 0 -50 0 0 0");
 			context.waitTicks(10);
 			context.runOnClient(mc -> {
 				mc.player.getAbilities().flying = true;
 				mc.player.onUpdateAbilities();
+				fly.pattern.set(pattern);
 				fly.radius.set(40.0);
 				fly.spacing.set(8.0);
 				fly.centerRadius.set(10.0);
@@ -1167,21 +1169,27 @@ public final class CoffeeGameTest implements FabricClientGameTest {
 				fly.setEnabled(true);
 			});
 			double[] widest = {0};
-			for (int i = 0; i < 90 && context.computeOnClient(mc -> fly.isEnabled()); i++) {
+			for (int i = 0; i < 150 && context.computeOnClient(mc -> fly.isEnabled()); i++) {
 				context.waitTicks(20);
-				context.runOnClient(mc -> widest[0] = Math.max(widest[0], Math.hypot(mc.player.getX() + 40, mc.player.getZ())));
+				context.runOnClient(mc -> widest[0] = Math.max(widest[0], Math.hypot(mc.player.getX(), mc.player.getZ())));
 			}
 			double[] end = context.computeOnClient(mc -> new double[]{mc.player.getX(), mc.player.getZ(), fly.isEnabled() ? 1 : 0});
-			LOG.info("AutoFly {} ended at {}, {} (still on: {}); widest {}", spin, end[0], end[1], end[2] == 1, widest[0]);
-			check(end[2] == 0, "AutoFly " + spin + " switches itself off when the spiral is done");
+			LOG.info("AutoFly {} {} ended at {}, {} (still on: {}); farthest from start {}", pattern, spin, end[0], end[1], end[2] == 1, widest[0]);
+			String name = "AutoFly " + pattern + " " + spin;
+			check(end[2] == 0, name + " switches itself off when the spiral is done");
+			// facing south (+Z) and turning right (west, -X): the round spiral's centre is 40 blocks west, the square's
+			// middle is half its 76-block outer lap west and south
+			boolean square = pattern == dev.coffeeclient.module.modules.movement.AutoFly.Pattern.Square;
+			double cx = square ? -38 : -40, cz = square ? 38 : 0;
 			if (spin == dev.coffeeclient.module.modules.movement.AutoFly.Spin.In) {
-				check(Math.hypot(end[0] + 40, end[1]) < 25, "AutoFly In ends near the spiral's centre");
+				check(Math.hypot(end[0] - cx, end[1] - cz) < 25, name + " ends near the middle");
 			} else {
-				check(Math.hypot(end[0] + 10, end[1]) > 30, "AutoFly Out ends on the outer lap");
+				check(widest[0] > 35, name + " reaches the outer lap");
 			}
 			context.runOnClient(mc -> mc.player.getAbilities().flying = false);
 		}
 		context.runOnClient(mc -> {
+			fly.pattern.reset();
 			fly.radius.reset();
 			fly.spacing.reset();
 			fly.centerRadius.reset();

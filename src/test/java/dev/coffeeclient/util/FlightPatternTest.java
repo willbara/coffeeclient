@@ -115,15 +115,64 @@ class FlightPatternTest {
 	}
 
 	@Test
-	void squareSweepsTheWholeAreaInLanes() {
+	void squareSpiralWindsInwardInStraightLanes() {
+		for (boolean clockwise : new boolean[]{true, false}) {
+			for (double inertia : new double[]{0, 0.5}) {
+				Flyer flyer = new Flyer(0);
+				flyer.inertia = inertia;
+				FlightPattern square = new FlightPattern.Square(0, 0, 0, clockwise, false, 200, 40, 20);
+				flyer.run(square, 1.5, 12, 40000);
+				String name = "clockwise=" + clockwise + " inertia=" + inertia;
+				assertTrue(square.done(), "reaches the middle, " + name);
+				// laps of 180, 140, 100, 60, 20 facing south, turning right (west) first: the outer lap spans
+				// z 0..180 and x -180..0, and the innermost one ends at (-100, 80)
+				double side = clockwise ? -1 : 1;
+				assertEquals(180, flyer.maxZ, 12, name);
+				assertEquals(180, clockwise ? -flyer.minX : flyer.maxX, 12, name);
+				assertTrue((clockwise ? flyer.maxX : -flyer.minX) < 12 && flyer.minZ > -12, "stays inside the square, " + name);
+				assertTrue(Math.hypot(flyer.x - side * 100, flyer.z - 80) < 15, "ends at the inner end: " + flyer.x + ", " + flyer.z);
+			}
+		}
+	}
+
+	@Test
+	void squareSpiralFollowsTheLaneNotTheCorner() {
+		// halfway down the first 180-block lane, 20 blocks off to the left of it: steer back toward the lane
+		// (a right turn from south), not straight at the far corner
+		FlightPattern square = new FlightPattern.Square(0, 0, 0, true, false, 200, 40, 20);
+		float yaw = square.yaw(20, 90, 1.5);
+		assertTrue(yaw > 45, "heads back to the lane: " + yaw);
+	}
+
+	@Test
+	void squareSpiralOutwardGrowsFromTheMiddle() {
+		for (boolean clockwise : new boolean[]{true, false}) {
+			Flyer flyer = new Flyer(0);
+			flyer.inertia = 0.5;
+			FlightPattern square = new FlightPattern.Square(0, 0, 0, clockwise, true, 200, 40, 20);
+			flyer.run(square, 1.5, 12, 40000);
+			assertTrue(square.done(), "closes the outer lap, clockwise=" + clockwise);
+			// laps of 20, 60, 100, 140, 180: x spans -100..80 (mirrored counterclockwise), z -80..100, ending at (-100, -80)
+			double side = clockwise ? -1 : 1;
+			assertTrue(Math.hypot(flyer.x - side * 100, flyer.z + 80) < 15, "ends on the outer corner: " + flyer.x + ", " + flyer.z);
+			assertEquals(100, flyer.maxZ, 12);
+			assertEquals(-80, flyer.minZ, 12);
+		}
+	}
+
+	@Test
+	void pausedSquareSpiralResumesOnTheNearestLane() {
 		Flyer flyer = new Flyer(0);
-		FlightPattern square = new FlightPattern.Square(0, 0, 0, true, 200, 40);
-		flyer.run(square, 1.5, 12, 20000);
-		assertTrue(square.done(), "finishes the sweep");
-		// facing south with a right (west) first turn: the square spans z 0..200 and x -200..0
-		assertEquals(200, flyer.maxZ, 12);
-		assertEquals(-200, flyer.minX, 12);
-		assertTrue(flyer.maxX < 12 && flyer.minZ > -12, "stays inside the square");
+		flyer.inertia = 0.5;
+		FlightPattern square = new FlightPattern.Square(0, 0, 0, true, false, 200, 40, 20);
+		flyer.run(square, 1.5, 12, 300);
+		assertTrue(!square.done());
+		flyer.x += 30;
+		flyer.z -= 25;
+		square.resync(flyer.x, flyer.z);
+		flyer.run(square, 1.5, 12, 40000);
+		assertTrue(square.done(), "still finishes after the pause");
+		assertTrue(Math.hypot(flyer.x + 100, flyer.z - 80) < 15, "ends at the inner end: " + flyer.x + ", " + flyer.z);
 	}
 
 	@Test
