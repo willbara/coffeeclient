@@ -61,7 +61,7 @@ public final class AutoFly extends Module {
 		/** Only old-version terrain someone has loaded since the server updated. */
 		Old_version(EnumSet.of(NewChunks.Kind.OLD_VERSION)),
 		/** Chunks being generated right now, by a player ahead of you. */
-		New(EnumSet.of(NewChunks.Kind.NEW));
+		New(EnumSet.of(NewChunks.Kind.NEW, NewChunks.Kind.PLACEHOLDER));
 
 		final Set<NewChunks.Kind> kinds;
 
@@ -92,6 +92,9 @@ public final class AutoFly extends Module {
 	public final NumberSetting turnSpeed = group(new NumberSetting("Turn speed", "Most degrees turned per tick", 12, 1, 45, 1), "Flying");
 	public final BooleanSetting holdForward = group(new BooleanSetting("Hold forward", "Hold the forward key while the pattern runs", true), "Flying");
 	public final BooleanSetting pauseInGuis = group(new BooleanSetting("Pause in GUIs", "Let go of forward while a screen is open", true), "Flying");
+	public final BooleanSetting showMode = group(new BooleanSetting("Show mode", "Module list: the pattern being flown (or Heading / Trail searching)", true), "Display");
+	public final BooleanSetting showDistance = group(new BooleanSetting("Show distance", "Module list: blocks left to fly", true), "Display");
+	public final BooleanSetting showCountdown = group(new BooleanSetting("Show countdown", "Module list: estimated time until the path is finished", true), "Display");
 
 	/** The path being flown, kept while the module is off so it can be resumed. */
 	private FlightPattern path;
@@ -250,14 +253,27 @@ public final class AutoFly extends Module {
 
 	@Override
 	public String infoString() {
-		if (coasting) return "Heading";
-		if (pattern.get() == Pattern.Trail && path instanceof FlightPattern.Trail trail && !trail.locked()) return "Trail · searching";
-		if (path == null || Double.isNaN(remaining)) return pattern.display();
-		String left = remaining >= 1000 ? String.format(Locale.ROOT, "%.1fk", remaining / 1000) : String.valueOf(Math.round(remaining));
-		double perSecond = speedAvg * 20;
-		if (perSecond < 1) return pattern.display() + " · " + left;
-		long s = Math.round(remaining / perSecond);
-		String eta = s >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format(Locale.ROOT, "%d:%02d", s / 60, s % 60);
-		return pattern.display() + " · " + left + " · " + eta;
+		if (coasting) return showMode.get() ? "Heading" : null;
+		boolean trail = pattern.get() == Pattern.Trail && path instanceof FlightPattern.Trail t && !t.locked();
+		if (trail) return showMode.get() ? "Trail · searching" : null;
+		StringBuilder info = new StringBuilder();
+		if (showMode.get()) info.append(pattern.display());
+		if (path != null && !Double.isNaN(remaining)) {
+			if (showDistance.get()) {
+				String left = remaining >= 1000 ? String.format(Locale.ROOT, "%.1fk", remaining / 1000) : String.valueOf(Math.round(remaining));
+				append(info, left);
+			}
+			double perSecond = speedAvg * 20;
+			if (showCountdown.get() && perSecond >= 1) {
+				long s = Math.round(remaining / perSecond);
+				append(info, s >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format(Locale.ROOT, "%d:%02d", s / 60, s % 60));
+			}
+		}
+		return info.toString();
+	}
+
+	private static void append(StringBuilder info, String part) {
+		if (!info.isEmpty()) info.append(" · ");
+		info.append(part);
 	}
 }

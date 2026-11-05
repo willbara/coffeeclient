@@ -228,6 +228,20 @@ public final class CoffeeGameTest implements FabricClientGameTest {
 			return freshBiomes + " " + savedBiomes + " " + freshBlocks + " " + savedBlocks;
 		});
 		check(palettes.equals("FRESH SAVED FRESH PACKED"), "NewChunks palette check tells generated from saved sections (" + palettes + ")");
+		String placeholders = context.computeOnClient(mc -> {
+			var factory = net.minecraft.world.level.chunk.PalettedContainerFactory.create(mc.level.registryAccess());
+			var barrens = mc.level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.BIOME)
+				.getOrThrow(net.minecraft.world.level.biome.Biomes.END_BARRENS);
+			var empty = new net.minecraft.world.level.chunk.LevelChunkSection(factory);
+			var voidEnd = new net.minecraft.world.level.chunk.LevelChunkSection(factory);
+			voidEnd.fillBiomesFromNoise((x, y, z, sampler) -> barrens, null, 0, 0, 0);
+			var solid = new net.minecraft.world.level.chunk.LevelChunkSection(factory);
+			solid.setBlockState(0, 0, 0, Blocks.END_STONE.defaultBlockState(), false);
+			return NewChunks.placeholder(new net.minecraft.world.level.chunk.LevelChunkSection[]{empty, empty})
+				+ " " + NewChunks.placeholder(new net.minecraft.world.level.chunk.LevelChunkSection[]{empty, voidEnd})
+				+ " " + NewChunks.placeholder(new net.minecraft.world.level.chunk.LevelChunkSection[]{empty, solid});
+		});
+		check(placeholders.equals("true false false"), "NewChunks placeholder: all air and all plains only (" + placeholders + ")");
 
 		Path dir = context.computeOnClient(mc -> CoffeeClient.config().directory().resolve("chunkdata").resolve("singleplayer").resolve("minecraft_overworld"));
 		try {

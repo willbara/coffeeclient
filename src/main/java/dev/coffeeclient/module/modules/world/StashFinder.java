@@ -474,7 +474,7 @@ public final class StashFinder extends Module {
 		ChunkPos pos = chunk.getPos();
 		NewChunks.Kind kind = chunkKind(pos);
 		if (oldChunksOnly.get() && newChunks().isEnabled()) {
-			if (kind == NewChunks.Kind.NEW) return;
+			if (kind != null && kind.fresh()) return;
 			if (kind == null && !waited) {
 				pending.putIfAbsent(pos, System.currentTimeMillis());
 				return;
