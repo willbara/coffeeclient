@@ -4,14 +4,14 @@
 
 <p align="center">
   Coffee Client is an open-source utility mod for Minecraft 26.2 that adds a customizable interface
-  and 198 high-quality modules across nine categories.
+  and 199 high-quality modules across nine categories.
 </p>
 
 <p align="center">
   <img alt="Minecraft 26.2" src="https://img.shields.io/badge/Minecraft-26.2-3C8527?style=flat-square">
   <img alt="Fabric" src="https://img.shields.io/badge/Fabric-Loader-8B5E3C?style=flat-square">
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-E76F00?style=flat-square">
-  <img alt="198 modules" src="https://img.shields.io/badge/Modules-198-6F4E37?style=flat-square">
+  <img alt="199 modules" src="https://img.shields.io/badge/Modules-199-6F4E37?style=flat-square">
   <img alt="GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-4B3621?style=flat-square">
 </p>
 
