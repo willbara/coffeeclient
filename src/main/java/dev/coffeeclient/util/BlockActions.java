@@ -73,7 +73,7 @@ public final class BlockActions {
 	/**
 	 * Places the block held in {@code item}'s slot at {@code pos}.
 	 *
-	 * @param item          from {@link Inv#findInHotbar}; must be in the hotbar or offhand
+	 * @param item          in the hotbar, offhand or main inventory (swapped in and back for the click)
 	 * @param rotate        face the click point first (the place happens on the next movement packet)
 	 * @param checkEntities refuse when an entity is in the way
 	 * @param swapBack      return to the previously held slot afterwards
@@ -83,7 +83,7 @@ public final class BlockActions {
 								boolean checkEntities, boolean swapBack) {
 		Minecraft mc = Minecraft.getInstance();
 		LocalPlayer player = mc.player;
-		if (player == null || mc.level == null || !(item.isHotbar() || item.isOffhand())) return false;
+		if (player == null || mc.level == null || !(item.isHotbar() || item.isOffhand() || item.isMain())) return false;
 		ItemStack stack = player.getInventory().getItem(item.slot());
 		Block block = stack.getItem() instanceof BlockItem blockItem ? blockItem.getBlock() : Blocks.OBSIDIAN;
 		if (!canPlace(pos, block, checkEntities)) return false;
@@ -99,16 +99,17 @@ public final class BlockActions {
 	/**
 	 * Places the block held in {@code item}'s slot by clicking {@code hit}, whatever is there. Use it for
 	 * air placement, where {@code hit} names an air block and the face it should be placed against.
-	 * The swap, the click and the swap back go out in one packet batch.
+	 * The swap, the click and the swap back go out in one packet batch; a main-inventory item is
+	 * swap-clicked into the held slot and back.
 	 *
 	 * @return false when there is no usable item, or when a higher-priority rotation already holds this tick
 	 */
 	public static boolean placeAt(BlockHitResult hit, Inv.FindItemResult item, boolean rotate, int priority, boolean swing,
 								  boolean swapBack) {
 		LocalPlayer player = Minecraft.getInstance().player;
-		if (player == null || !(item.isHotbar() || item.isOffhand())) return false;
+		if (player == null || !(item.isHotbar() || item.isOffhand() || item.isMain())) return false;
 		InteractionHand hand = item.isOffhand() ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-		Runnable action = () -> PacketBatch.run(() -> {
+		Runnable action = item.isMain() ? () -> Inv.withItem(item.slot(), false, () -> interact(hit, InteractionHand.MAIN_HAND, swing)) : () -> PacketBatch.run(() -> {
 			if (hand == InteractionHand.MAIN_HAND) Inv.swap(item.slot(), swapBack);
 			interact(hit, hand, swing);
 			if (swapBack && hand == InteractionHand.MAIN_HAND) Inv.swapBack();

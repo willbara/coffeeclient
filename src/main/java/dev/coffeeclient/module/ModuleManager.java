@@ -68,7 +68,7 @@ public final class ModuleManager {
 			new Timer(), new TickShift(), new SnapTap(), new AutoWalk(), new TravelGuard(),
 			// World
 			new BuildHeight(), new AutoSign(), new AutoMount(), new AutoShearer(), new EndermanLook(),
-			new StashFinder(), new ChestSearch(), new StrongholdFinder(), new StasisFinder(), new Sonar(),
+			new StashFinder(), new ChestSearch(), new StrongholdFinder(), new StasisFinder(), new Sonar(), new AutoBuild(),
 			// Player
 			new HotbarLock(), new DurabilityAlert(), new ArmorStatus(), new InventoryPlus(), new QuickStack(), new Organizer(),
 			new PickupNotifier(), new XpTracker(), new ItemCounter(), new NoFall(), new AutoTool(),

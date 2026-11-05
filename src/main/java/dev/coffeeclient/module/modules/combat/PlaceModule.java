@@ -64,11 +64,16 @@ public abstract class PlaceModule extends Module {
 
 	/** {@code defaultBlocks} and {@code defaultAirPlace} are this module's defaults for Blocks and Air place. */
 	protected PlaceModule(String name, List<String> aliases, String description, List<String> defaultBlocks, boolean defaultAirPlace) {
-		super(name, aliases, Category.COMBAT, description);
+		this(name, aliases, Category.COMBAT, description, defaultBlocks, defaultAirPlace, true, 4, 0);
+	}
+
+	protected PlaceModule(String name, List<String> aliases, Category category, String description, List<String> defaultBlocks,
+						  boolean defaultAirPlace, boolean defaultRotate, int defaultPerTick, int defaultDelay) {
+		super(name, aliases, category, description);
 		blocks = group(new BlockListSetting("Blocks", "Blocks to place; the first one found in your hotbar is used", defaultBlocks), "Place");
-		perTick = group(new NumberSetting("Per tick", "Most blocks placed in one tick (with Rotate on, one per tick)", 4, 1, 8, 1), "Place");
-		delay = group(new NumberSetting("Delay", "Ticks to wait after placing", 0, 0, 10, 1), "Place");
-		rotate = group(new BooleanSetting("Rotate", "Face each block before placing it", true), "Place");
+		perTick = group(new NumberSetting("Per tick", "Most blocks placed in one tick (with Rotate on, one per tick)", defaultPerTick, 1, 8, 1), "Place");
+		delay = group(new NumberSetting("Delay", "Ticks to wait after placing", defaultDelay, 0, 10, 1), "Place");
+		rotate = group(new BooleanSetting("Rotate", "Face each block before placing it", defaultRotate), "Place");
 		airPlace = group(new BooleanSetting("Air place", "Place against nothing; without it, a support block goes under a cell that has no neighbour", defaultAirPlace), "Place");
 		swing = group(new BooleanSetting("Swing", "Swing your hand when placing", true), "Place");
 		breakCrystals = group(new BooleanSetting("Break crystals", "Hit a crystal sitting in a cell, unless the blast would kill you", true), "Place");
@@ -111,7 +116,7 @@ public abstract class PlaceModule extends Module {
 		int budget = (rotate.get() ? 1 : perTick.intValue()) - used;
 		if (budget <= 0 || player.tickCount < resumeAt) return 0;
 		if (cells.isEmpty() || CombatTick.lagging() || !CombatTick.claim(CombatTick.Kind.PLACE, this, priority, 1)) return 0;
-		Inv.FindItemResult item = Inv.findInHotbar(this::placeable);
+		Inv.FindItemResult item = findBlock();
 		if (!item.found()) return 0;
 		Block block = ((BlockItem) player.getInventory().getItem(item.slot()).getItem()).getBlock();
 
@@ -138,7 +143,7 @@ public abstract class PlaceModule extends Module {
 		return count;
 	}
 
-	private boolean placeOne(BlockPos pos, Inv.FindItemResult item, int priority, boolean checkEntities) {
+	protected boolean placeOne(BlockPos pos, Inv.FindItemResult item, int priority, boolean checkEntities) {
 		if (airPlace.get() && BlockActions.placeParams(pos) == null) {
 			return BlockActions.placeAt(new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false), item, rotate.get(), priority, swing.get(), true);
 		}
@@ -178,9 +183,14 @@ public abstract class PlaceModule extends Module {
 		return stack.getItem() instanceof BlockItem item && blocks.has(item.getBlock());
 	}
 
-	/** True when the hotbar or offhand holds one of the blocks. */
+	/** Where the block to place comes from: the hotbar or offhand. */
+	protected Inv.FindItemResult findBlock() {
+		return Inv.findInHotbar(this::placeable);
+	}
+
+	/** True when one of the blocks is where {@link #findBlock} looks. */
 	protected boolean hasBlocks() {
-		return Inv.findInHotbar(this::placeable).found();
+		return findBlock().found();
 	}
 
 	@Override
