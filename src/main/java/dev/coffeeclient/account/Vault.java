@@ -21,15 +21,27 @@ import java.util.Base64;
  * folder ({@code ~/.coffeeclient/vault.key}), outside the game folder, so sharing or uploading the
  * instance's config does not hand out logins (after alt manager). Anyone with access to your
  * user account can still read both files.
+ * <p>
+ * Inside a Flatpak the home folder is thrown away when the game closes, which would make a new key on
+ * every launch and lose every saved login, so there the key lives in the app's persistent data folder.
  */
 public final class Vault {
 	private static final String PREFIX = "v1:";
 	private static final int IV_BYTES = 12, TAG_BITS = 128;
 	private static final SecureRandom RANDOM = new SecureRandom();
 	private static byte[] key;
-	private static Path file = Path.of(System.getProperty("user.home"), ".coffeeclient", "vault.key");
+	private static Path file = defaultKeyFile(System.getProperty("user.home"), System.getenv("FLATPAK_ID"),
+		System.getenv("XDG_DATA_HOME"), Files.exists(Path.of("/.flatpak-info")));
 
 	private Vault() {
+	}
+
+	/** Where the key goes: the home folder, or the app's data folder when running in a Flatpak. */
+	static Path defaultKeyFile(String home, String flatpakId, String dataHome, boolean flatpakInfo) {
+		boolean flatpak = flatpakInfo && flatpakId != null && !flatpakId.isEmpty();
+		if (!flatpak) return Path.of(home, ".coffeeclient", "vault.key");
+		Path data = dataHome == null || dataHome.isEmpty() ? Path.of(home, ".local", "share") : Path.of(dataHome);
+		return data.resolve("coffeeclient").resolve("vault.key");
 	}
 
 	public static Path keyFile() {

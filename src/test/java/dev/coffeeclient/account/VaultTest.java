@@ -37,4 +37,18 @@ class VaultTest {
 		Vault.useKeyFile(key);
 		assertEquals("secret", Vault.open(Vault.seal("secret")));
 	}
+
+	@Test
+	void keyStaysInTheHomeFolderOutsideAFlatpak() {
+		assertEquals(Path.of("/home/u/.coffeeclient/vault.key"), Vault.defaultKeyFile("/home/u", null, null, false));
+		// Only one of the two Flatpak markers is not enough.
+		assertEquals(Path.of("/home/u/.coffeeclient/vault.key"), Vault.defaultKeyFile("/home/u", "app.id", "/data", false));
+		assertEquals(Path.of("/home/u/.coffeeclient/vault.key"), Vault.defaultKeyFile("/home/u", null, "/data", true));
+	}
+
+	@Test
+	void keyMovesToTheAppDataFolderInAFlatpak() {
+		assertEquals(Path.of("/data/coffeeclient/vault.key"), Vault.defaultKeyFile("/home/u", "app.id", "/data", true));
+		assertEquals(Path.of("/home/u/.local/share/coffeeclient/vault.key"), Vault.defaultKeyFile("/home/u", "app.id", null, true));
+	}
 }
