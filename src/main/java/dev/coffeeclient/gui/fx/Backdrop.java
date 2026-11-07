@@ -25,6 +25,16 @@ public final class Backdrop {
 		if (scene == Scene.NONE || alpha <= 0.01f) return;
 		float time = Motion.time();
 		float px = (mx - w / 2f) / Math.max(1, w), py = (my - h / 2f) / Math.max(1, h);
+		// a scene is thousands of fills: as separate GUI elements their placement alone heats the CPU
+		Draw.beginBatch(g);
+		try {
+			scene(g, t, scene, w, h, time, alpha, px, py);
+		} finally {
+			Draw.endBatch(g);
+		}
+	}
+
+	private static void scene(GuiGraphicsExtractor g, Theme t, Scene scene, int w, int h, float time, float alpha, float px, float py) {
 		switch (scene) {
 			case STEAM -> steam(g, t, w, h, time, alpha, px);
 			case BEANS -> beans(g, t, w, h, time, alpha, px, py);

@@ -102,7 +102,30 @@ public final class Draw {
 	public static void rect(GuiGraphicsExtractor g, int x, int y, int w, int h, int color) {
 		color = a(color);
 		if (w <= 0 || h <= 0 || Colors.alpha(color) == 0) return;
-		g.fill(x, y, x + w, y + h, color);
+		if (batch != null) batch.add(g.pose(), x, y, x + w, y + h, color, color);
+		else g.fill(x, y, x + w, y + h, color);
+	}
+
+	// ---- batching: many fills as one GUI element ----
+
+	private static QuadBatch batch;
+
+	/**
+	 * Collect the following {@link #rect}, {@link #gradientV}, {@link #gradientH}, {@link #quad} and
+	 * {@link #stroke} calls into one GUI element until {@link #endBatch}. Vanilla checks each new element
+	 * against the ones already added, so thousands of small fills (a backdrop) cost quadratic time per
+	 * frame. Only for runs of plain fills under one scissor: text and other draws are not collected and
+	 * would land under the batch.
+	 */
+	public static void beginBatch(GuiGraphicsExtractor g) {
+		batch = new QuadBatch(((GuiElementSink) g).coffeeclient$scissor());
+	}
+
+	/** Submit the batch started by {@link #beginBatch}. Call from a finally block. */
+	public static void endBatch(GuiGraphicsExtractor g) {
+		QuadBatch b = batch;
+		batch = null;
+		if (b != null && !b.isEmpty()) ((GuiElementSink) g).coffeeclient$addElement(b);
 	}
 
 	public static void border(GuiGraphicsExtractor g, int x, int y, int w, int h, int color) {
@@ -141,7 +164,8 @@ public final class Draw {
 
 	public static void gradientV(GuiGraphicsExtractor g, int x, int y, int w, int h, int top, int bottom) {
 		if (w <= 0 || h <= 0) return;
-		g.fillGradient(x, y, x + w, y + h, a(top), a(bottom));
+		if (batch != null) batch.add(g.pose(), x, y, x + w, y + h, a(top), a(bottom));
+		else g.fillGradient(x, y, x + w, y + h, a(top), a(bottom));
 	}
 
 	/** Horizontal gradient: the vertical gradient rotated a quarter turn. */
@@ -150,7 +174,8 @@ public final class Draw {
 		g.pose().pushMatrix();
 		g.pose().translate(x, y + h);
 		g.pose().rotate((float) (-Math.PI / 2));
-		g.fillGradient(0, 0, h, w, a(left), a(right));
+		if (batch != null) batch.add(g.pose(), 0, 0, h, w, a(left), a(right));
+		else g.fillGradient(0, 0, h, w, a(left), a(right));
 		g.pose().popMatrix();
 	}
 
@@ -322,7 +347,8 @@ public final class Draw {
 		}
 		g.pose().pushMatrix();
 		g.pose().mul(new Matrix3x2f(ux, uy, vx, vy, x0, y0));
-		g.fill(0, 0, 1, 1, a(color));
+		if (batch != null) batch.add(g.pose(), 0, 0, 1, 1, a(color), a(color));
+		else g.fill(0, 0, 1, 1, a(color));
 		g.pose().popMatrix();
 	}
 
